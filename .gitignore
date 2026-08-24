@@ -1,0 +1,56 @@
+# ---------------------------------------------------------------------
+# Confidential. Nothing derived from the source documents may be tracked.
+#
+# The vector stores are the trap: ChromaDB keeps the raw text of every
+# chunk alongside its embedding, and the BM25 pickles keep it too. A
+# store is the documents in another form, not a build artefact.
+# ---------------------------------------------------------------------
+
+# Source documents
+satellites/*/documents/*
+!satellites/*/documents/PUT_DOCUMENTS_HERE.txt
+
+# Extracted text, captions, command records, figures
+satellites/*/extracted/
+
+# Vector stores, including the per-model ones from compare_models.py
+satellites/*/vectorstore/
+satellites/*/vectorstore_*/
+
+# Belt and braces: no document format anywhere in the tree
+*.pdf
+*.doc
+*.docx
+*.pptx
+*.xlsx
+
+# ---------------------------------------------------------------------
+# Large or machine-specific
+# ---------------------------------------------------------------------
+
+# Downloaded models, several GB
+models/*
+!models/.gitkeep
+
+.venv/
+venv/
+env/
+
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# ---------------------------------------------------------------------
+# Local scratch
+# ---------------------------------------------------------------------
+
+diagnose.py
+assistant_audit.log
+*.log
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Results ARE tracked: they hold metrics and short labels only
+# (for example "FCP-5201 / p.1 / toc_index"), never document text.

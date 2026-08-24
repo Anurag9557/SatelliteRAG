@@ -1,0 +1,30 @@
+# PyTorch is NOT listed here on purpose.
+#
+# pip resolves torch against PyPI, which only serves CPU-only wheels, so
+# having it here would silently replace a CUDA build with the CPU one
+# every time this file is installed.
+#
+# Install PyTorch first, from the wheel index that matches your CUDA
+# version (check with: nvidia-smi):
+#
+#   CUDA 12.8    pip install torch --index-url https://download.pytorch.org/whl/cu128
+#   CUDA 12.1    pip install torch --index-url https://download.pytorch.org/whl/cu121
+#   CUDA 11.8    pip install torch --index-url https://download.pytorch.org/whl/cu118
+#   CPU only     pip install torch
+#
+# Then verify before installing anything below:
+#
+#   python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
+#
+# The version string must end in +cuXXX and is_available() must be True.
+# Python 3.11 or 3.12 is recommended; 3.13+ often has no matching wheel.
+
+pyyaml>=6.0
+pymupdf>=1.24.0
+python-docx>=1.1.0
+pillow>=10.0.0
+chromadb>=0.4.22
+rank_bm25>=0.2.2
+sentence-transformers>=2.5.0
+ollama>=0.3.0
+truststore>=0.9.0

@@ -1,0 +1,40 @@
+# Aditya-L1
+#
+# This file is optional. Documents in documents/ are recognised by name,
+# and everything below has a default. Edit only what you want to change.
+
+name: Aditya-L1
+slug: aditya-l1
+
+# Embedding model. Run "python cli.py models" to see what is available,
+# "python cli.py prefetch <name>" to download one.
+# Changing this needs: python cli.py ingest aditya-l1 --reset
+embedding:
+  model: minilm-l6
+
+# Chunk size per document type. Extraction emits whole sections; these
+# budgets are applied at ingest, so changing them needs a re-ingest but
+# not a re-extract.
+chunking:
+  FCP:
+    max_chars: 2500
+    overlap: 200
+  MOR:
+    max_chars: 1000
+    overlap: 150
+  OPS_MANUAL:
+    max_chars: 1200
+    overlap: 200
+  GUIDELINES:
+    max_chars: 1200
+    overlap: 200
+
+# Retrieval. These are query-time only, so no rebuild is needed.
+retrieval:
+  top_k: 5
+  rrf_k: 60
+  n_dense: 20
+  n_bm25: 20
+  rerank: true
+  rerank_pool: 20
+  rerank_model: cross-encoder/ms-marco-MiniLM-L-6-v2

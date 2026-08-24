@@ -1,0 +1,101 @@
+id,question,rank,hit@1,hit@3,hit@5,hit@10,rr,top,note
+obc_on,What is the procedure for switching on OBC?,3,0,1,1,1,0.3333333333333333,p.230 / section,FCP-5201 body present
+obc_reset,How do I perform an OBC system reset?,1,1,1,1,1,1.0,FCP / FCP-5203 / p.12 / procedure,FCP-5203 body present
+obc_cpu,OBC CPU reset procedure,1,1,1,1,1,1.0,FCP / FCP-5204 / p.14 / procedure,FCP-5204 body present
+tc_link,telecommand link test procedure,1,1,1,1,1,1.0,FCP / FCP-5215 / p.24 / procedure,FCP-5215 body present
+hga_motors,Which FCP is used to switch on HGA motors?,1,1,1,1,1,1.0,FCP / FCP-5957 / toc_index,index record
+tone_rng,tone ranging of transponder-1 procedure,1,1,1,1,1,1.0,FCP / FCP-6009 / toc_index,index record
+star_ss1,powering on star sensor-1,1,1,1,1,1,1.0,FCP / FCP-5412 / toc_index,index record
+gyro_on,"gyro power on, off and selection",1,1,1,1,1,1.0,FCP / FCP-5601 / toc_index,index record
+latch_valve,opening and closing of latch valves,1,1,1,1,1,1.0,FCP / FCP-5652 / toc_index,index record
+suit_on,SUIT payload on procedure,1,1,1,1,1,1.0,FCP / FCP-6219 / toc_index,index record
+safety,What are the safety logics?,1,1,1,1,1,1.0,MOR / p.228 / section,power safety logics or safe-mode text
+payload_gl,What are the guidelines for Payload operations?,2,0,1,1,1,0.5,OPS_MANUAL / FCP-5589 / section,manual / guidelines payload section
+orbit,What are the Aditya-L1 orbit constraints?,1,1,1,1,1,1.0,MOR / p.16 / section,halo-orbit design and selection
+mrs_diagram,Provide me the MRS recovery flow diagram,1,1,1,1,1,1.0,MOR / p.238 / section,MRS block diagram
+cmds_date,What commands were uplinked on 2026-06-09?,1,1,1,1,1,1.0,command_log,date filter to commands store
+obc_scrub,OBC memory scrub operation,1,1,1,1,1,1.0,FCP / FCP-5225 / toc_index,FCP-5225
+obc_wdt,OBC watchdog timer limit and reset procedure,1,1,1,1,1,1.0,FCP / FCP-5257 / toc_index,FCP-5257
+tm_prog,programmable telemetry configuration procedure,1,1,1,1,1,1.0,FCP / FCP-5231 / toc_index,FCP-5231
+eeprom_mgmt,EEPROM management procedure,1,1,1,1,1,1.0,FCP / FCP-5203 / p.12 / procedure,FCP-5247
+sun_acq,sun acquisition using the auto sequencer,1,1,1,1,1,1.0,FCP / FCP-5001 / toc_index,FCP-5001
+mag_on,which FCP powers on the magnetometer,1,1,1,1,1,1.0,FCP / FCP-6191 / toc_index,FCP-6191
+wheel_on,powering on the reaction wheels,2,0,1,1,1,0.5,MOR / p.134 / section,FCP-5551
+wheel_unload,reaction wheel momentum dumping,2,0,1,1,1,0.5,OPS_MANUAL / section,FCP-5070
+star_ss2,powering on star sensor-2,1,1,1,1,1,1.0,FCP / FCP-5470 / toc_index,FCP-5470
+xband_t1,switch on X-band transmitter-1 to LGA or MGA,2,0,1,1,1,0.5,GUIDELINES / section,FCP-6006
+solexs_on,SoLEXS payload ON procedure,1,1,1,1,1,1.0,FCP / FCP-6193 / toc_index,FCP-6193
+velc_on,VELC payload switch on procedure,1,1,1,1,1,1.0,FCP / FCP-6196 / toc_index,FCP-6196
+fdir,How does the FDIR system work?,1,1,1,1,1,1.0,MOR / p.240 / image_caption,FDIR logics
+safe_mode,What happens when the spacecraft enters safe mode?,1,1,1,1,1,1.0,p.235 / image_caption,safe mode detection and recovery
+halo,Explain the halo orbit design and selection,1,1,1,1,1,1.0,section,halo orbit design
+crtbp,circular restricted three-body problem dynamics,1,1,1,1,1,1.0,MOR / p.24 / section,CRTBP dynamics
+station_keep,station keeping strategy for the halo orbit,1,1,1,1,1,1.0,MOR / p.38 / section,station keeping
+thermal,thermal requirements and special heater needs,1,1,1,1,1,1.0,MOR / p.137 / section,thermal
+power_budget,spacecraft power budget,2,0,1,1,1,0.5,GUIDELINES / section,power budget
+energy_bal,energy balance analysis,1,1,1,1,1,1.0,MOR / p.186 / section,energy balance
+odhs_diag,ODHS block diagram,3,0,1,1,1,0.3333333333333333,p.136 / image_caption,ODHS block diagram
+prop_diag,propulsion system schematic diagram,1,1,1,1,1,1.0,p.165 / image_caption,propulsion schematic
+suit_diag,functional diagram of the SUIT payload,1,1,1,1,1,1.0,MOR / p.127 / section,SUIT functional diagram
+cmds_obc,OBC commands uplinked on 2026-06-09,1,1,1,1,1,1.0,command_log,commands store
+cmds_dtg,DTG gyro commands uplinked on 2026-06-09,5,0,0,1,1,0.2,command_log,commands store
+obc_thermistor,How is the OBC supply routed for thermistor and thermocouple selection?,1,1,1,1,1,1.0,FCP / FCP-5206 / p.16 / procedure,FCP-5206
+obc_pwr_interrupt,How do you interrupt one OBC's power using the other OBC?,1,1,1,1,1,1.0,FCP / FCP-5208 / p.19 / procedure,FCP-5208
+diff_time_tag,Procedure for differential time-tagged commanding,1,1,1,1,1,1.0,FCP / FCP-5216 / toc_index,FCP-5216
+event_uplink_exec,How is an event uplinked and then executed?,1,1,1,1,1,1.0,FCP-5217 / toc_index,FCP-5217
+obt_commanding,On-board-time based commanding operations,1,1,1,1,1,1.0,FCP / FCP-5218 / toc_index,FCP-5218
+bus1553_sel,Selecting the active 1553 bus,1,1,1,1,1,1.0,FCP / FCP-5220 / toc_index,FCP-5220
+msg1553,Transferring messages over the 1553 bus,3,0,1,1,1,0.3333333333333333,MOR / p.117 / section,FCP-5221
+block_checksum,Block checksum operation on the OBC,1,1,1,1,1,1.0,FCP / FCP-5227 / toc_index,FCP-5227
+pcs,What is the programmable command sequencer?,1,1,1,1,1,1.0,FCP / FCP-5228 / toc_index,FCP-5228
+ccb,Configurable command block operation,1,1,1,1,1,1.0,FCP / FCP-5232 / toc_index,FCP-5232
+ebc,Event based commanding on the OBC,1,1,1,1,1,1.0,FCP / FCP-5233 / toc_index,FCP-5233
+obc_fdi,Enabling OBC fault detection and isolation,1,1,1,1,1,1.0,FCP / FCP-5248 / toc_index,FCP-5248
+rate_damp,Rate damp mode with the prime controller,1,1,1,1,1,1.0,FCP / FCP-5003 / toc_index,FCP-5003
+iac_mode,What is IAC mode?,1,1,1,1,1,1.0,FCP / FCP-5004 / toc_index,FCP-5004
+normal_modes_nohapss,Changing over to normal modes without HAPSS,1,1,1,1,1,1.0,FCP / FCP-5006 / toc_index,FCP-5006
+auto_firing,Enabling or disabling auto thruster firing,0,0,0,0,0,0.0,GUIDELINES / section,FCP-5008
+manual_thruster,Manually firing a thruster,0,0,0,0,0,0.0,GUIDELINES / section,FCP-5009
+rw_logics,Reaction-wheel related control logics,0,0,0,0,0,0.0,MOR / p.134 / section,FCP-5011
+auto_momentum,Auto momentum dumping using thrusters,0,0,0,0,0,0.0,OPS_MANUAL / section,FCP-5014
+orbit_models,Orbit models and their selection for control,1,1,1,1,1,1.0,FCP / FCP-5017 / toc_index,FCP-5017
+gyro_cal,Gyro calibration operation,0,0,0,0,0,0.0,MOR / p.192 / section,FCP-5044
+mrs_enable,Enabling the master recovery sequencer,1,1,1,1,1,1.0,MOR / p.238 / section,FCP-5057
+gyro_bias,Setting the gyro bias,1,1,1,1,1,1.0,FCP / FCP-5602 / toc_index,FCP-5602
+csa_main,CSA main on/off procedure,1,1,1,1,1,1.0,FCP / FCP-5608 / toc_index,FCP-5608
+fpga_power,FPGA main or redundant on/off operations,1,1,1,1,1,1.0,FCP / FCP-5702 / toc_index,FCP-5702
+papa_on,Nominal switch-on of the PAPA-1 payload,1,1,1,1,1,1.0,FCP / FCP-6151 / toc_index,FCP-6151
+aspex_swis,ASPEX SWIS power-on and data-acquisition start,1,1,1,1,1,1.0,FCP / FCP-6173 / toc_index,FCP-6173
+helios_on,Switching on the HELIOS payload,1,1,1,1,1,1.0,FCP / FCP-6210 / toc_index,FCP-6210
+odhs_on,ODHS switch-on procedure,3,0,1,1,1,0.3333333333333333,GUIDELINES / section,FCP-6222
+odhs_record,Configuring all three ODHS chains in record mode,1,1,1,1,1,1.0,FCP / FCP-6223 / toc_index,FCP-6223
+obs_id,Setting the observation ID of the payloads,1,1,1,1,1,1.0,FCP / FCP-6230 / toc_index,FCP-6230
+camera_config,Configuration settings of camera-1 and camera-2,1,1,1,1,1,1.0,FCP / FCP-6229 / toc_index,FCP-6229
+mission_overview,Give a high-level overview of the Aditya-L1 mission,9,0,0,0,1,0.1111111111111111,section,MOR 1
+mission_phases,What are the distinct phases of the mission?,1,1,1,1,1,1.0,MOR / p.106 / section,MOR 4
+l1_insertion,What happens during the L1 insertion phase?,1,1,1,1,1,1.0,p.113 / section,MOR 4.3.1
+transfer_traj,How is the transfer trajectory designed?,1,1,1,1,1,1.0,MOR / p.27 / section,MOR
+orbit_det,Orbit dynamics and orbit determination,1,1,1,1,1,1.0,MOR / p.42 / section,MOR 3
+prop_budget,What is the propellant budget?,1,1,1,1,1,1.0,MOR / p.35 / section,MOR
+hapss,"What is HAPSS, the high-accuracy active pixel sun sensor?",1,1,1,1,1,1.0,MOR / p.131 / section,MOR 5.4.5
+pointing_budget,What is the attitude pointing budget?,1,1,1,1,1,1.0,MOR / p.122 / section,MOR 5.3.1
+bus_ctrl_fdir,How does the bus-controller FDIR work?,1,1,1,1,1,1.0,MOR / p.232 / section,MOR 7.9.1
+power_safe_mode,Explain the power-based safe mode,1,1,1,1,1,1.0,MOR / p.236 / section,MOR 7.10.1
+crab_pointing,Calibration pointing at the Crab source,1,1,1,1,1,1.0,MOR / p.215 / section,MOR 6.3.7.1
+suit_desc,What is the Solar Ultraviolet Imaging Telescope (SUIT)?,1,1,1,1,1,1.0,OPS_MANUAL / section,MOR 5.11.2
+config_before_safe,Spacecraft configuration before safe mode,3,0,1,1,1,0.3333333333333333,section,manual
+stellar_cal,Stellar calibration guidelines,1,1,1,1,1,1.0,GUIDELINES / section,manual
+velc_occulter,Aligning the VELC occulter center to the sun,0,0,0,0,0,0.0,OPS_MANUAL / section,manual
+moi,Spacecraft moment-of-inertia parameters,1,1,1,1,1,1.0,GUIDELINES / FCP-5098 / section,manual
+hard_emergency,What is on the hard emergency list?,1,1,1,1,1,1.0,GUIDELINES / section,guidelines
+thermal_limits,Thermal limits for the spacecraft,8,0,0,0,1,0.125,p.137 / section,guidelines
+apss_on,Switching on the APSS sun sensor,1,1,1,1,1,1.0,GUIDELINES / section,guidelines
+xband_system,The X-band system,2,0,1,1,1,0.5,MOR / p.144 / section,guidelines
+momentum_bias,3-reaction-wheel configuration and momentum bias,0,0,0,0,0,0.0,MOR / p.134 / section,guidelines
+heater_chart,Diagram of on-board heater power-status telemetry,2,0,1,1,1,0.5,MOR / p.237 / image_caption,caption
+thruster_cosines,Diagram of thruster direction cosines,2,0,1,1,1,0.5,GUIDELINES / section,caption
+pressure_valves,"Diagram of pressure transducers, latches and valves",1,1,1,1,1,1.0,image_caption,caption
+od_residue,Plot of orbit-determination residues against LISA Pathfinder,2,0,1,1,1,0.5,MOR / p.88 / section,caption
+cmd_cid,Which command had CID OBCS2370?,1,1,1,1,1,1.0,TCH / command_log,commands
+cmd_mep,Was the MEP enable command uplinked?,2,0,1,1,1,0.5,TCH / command_log,commands
+cmd_station,Commands uplinked from SCC to station N18,0,0,0,0,0,0.0,TCH / command_log,commands
