@@ -33,6 +33,7 @@ Searching:
 """
 
 import argparse
+from pathlib import Path
 
 from core import (caption, embeddings, extract, generate, ingest, registry,
                   rerank, retrieve)
@@ -218,6 +219,11 @@ def run_query(sats, query, top_k, doc_types, subsystem, show_text,
                                     doc_types=doc_types,
                                     subsystem=subsystem, model=model)
         print(f"{answer}\n")
+        # The model cited none of these when it said nothing matched, so
+        # listing them as "Sources" would misrepresent nearest-neighbor
+        # noise as relevant citations.
+        if generate.NOT_FOUND_MESSAGE in answer:
+            return hits
         print("Sources:")
     print(retrieve.format_hits(hits, show_satellite=len(sats) > 1,
                                show_text=show_text))
@@ -229,6 +235,22 @@ def cmd_query(args):
     if not sats:
         print("  no satellites matched")
         return
+
+    if args.file:
+        if args.query:
+            raise SystemExit("pass either a query or --file, not both")
+        lines = Path(args.file).read_text(encoding="utf-8").splitlines()
+        questions = [l.strip() for l in lines if l.strip() and not l.strip().startswith("#")]
+        for i, q in enumerate(questions, 1):
+            print(f"\n[{i}/{len(questions)}] {q}\n")
+            run_query(sats, q, args.k, args.doc_types,
+                      args.subsystem, args.show_text,
+                      no_answer=args.no_answer, model=args.model)
+        return
+
+    if not args.query:
+        raise SystemExit("pass a query or --file")
+
     print()
     run_query(sats, args.query, args.k, args.doc_types,
               args.subsystem, args.show_text,
@@ -338,7 +360,12 @@ def main():
 
     p = sub.add_parser("query", help="one-shot search")
     p.add_argument("satellite", nargs=1)
-    p.add_argument("query")
+    p.add_argument("query", nargs="?", default=None,
+                   help="the question (omit when using --file)")
+    p.add_argument("--file", default=None,
+                   help="path to a text file of questions, one per line "
+                        "(# lines and blank lines are skipped); runs each "
+                        "one in turn instead of a single query")
     p.add_argument("-k", type=int, default=5)
     p.add_argument("--doc-types", nargs="*", default=None)
     p.add_argument("--subsystem", default=None)

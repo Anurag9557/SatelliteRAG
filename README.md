@@ -24,11 +24,34 @@ changed against the earlier pipeline.
 | `PROJECT_CONTEXT.md` | architecture, design decisions, every measured number |
 | `COMPARISON.md` | this system versus the previous pipeline |
 | `results/` | raw measurements |
+| `testset_public_demo.py` / `evaluate_public_demo.py` | retrieval benchmark for the public demo dataset below (`testset.py` / `evaluate.py` are written for the confidential real corpus and score zero against it) |
+
+
+## Demo dataset
+
+The real Aditya-L1 flight-ops documents are confidential and are not in
+this repo. `satellites/aditya-l1/` ships instead with 4 public ISRO/ISSDC
+documents about the mission itself (mission booklet, spacecraft/orbit
+booklet, Announcement of Opportunity, mission brochure), so the pipeline
+works out of the box. Re-fetch them with:
+
+    python scripts/fetch_adityal1_docs.py
+
+This dataset only has MOR / OPS_MANUAL / GUIDELINES / HANDBOOK documents —
+no FCP or telecommand log — so it demonstrates retrieval and generation,
+not the procedure/command-log features described below. `lora/` and
+`slides/` hold a LoRA fine-tuning demo and auto-generated PPTX decks built
+from this same public data.
 
 
 ## Adding a satellite
 
-Make a folder, copy the documents in, run one command.
+Scaffold the folder (or just create it yourself — nothing below needs it):
+
+    python cli.py new chandrayaan-3
+
+Copy the documents in, named so each one's type is recognised
+automatically (see "Which filenames are recognised" below):
 
     satellites\chandrayaan-3\documents\
         CH3_FCP_v2.pdf
@@ -37,10 +60,21 @@ Make a folder, copy the documents in, run one command.
         CH3_Guidelines_NormalPhase.doc
         telecommand_history_ch3.txt
 
+Check they were recognised, then build:
+
+    python cli.py scan chandrayaan-3
     python cli.py build chandrayaan-3
 
-There is no configuration to fill in. The document type of each file is
-recognised from its name.
+`scan` only reports what matched; nothing is written until `build` runs.
+`build` is extract + caption + ingest in one pass (see "What build does"
+below) and prints `ok` per satellite when done. Then:
+
+    python cli.py query chandrayaan-3 "your question"
+
+There is no configuration file to fill in — the document type of each
+file is recognised from its name. `satellite.yaml` is only needed to
+override a default (embedding model, chunk sizes) or to map a filename
+the patterns cannot recognise.
 
 
 ## What build does
@@ -109,6 +143,9 @@ satellite.yaml:
                 vectorstore\     ChromaDB + BM25
             chandrayaan-3\
                 ... same shape
+        scripts\              fetch_adityal1_docs.py, one-time public-data fetch
+        lora\                 LoRA fine-tuning demo: build_dataset.py, train.py, query.py
+        slides\               auto-generated PPTX decks from real pipeline output
 
 
 ## Install
@@ -137,19 +174,67 @@ automatically once installed.
 
 ## Querying
 
-    python cli.py query aditya-l1 "how to switch on OBC"
-    python cli.py query aditya-l1 "which FCP covers gyro power on"
-    python cli.py query aditya-l1 "what commands were uplinked on 2026-06-09"
-    python cli.py query aditya-l1 "MRS recovery diagram"
-    python cli.py query aditya-l1 "safe mode" --doc-types GUIDELINES MOR
-    python cli.py query all "safe mode recovery"
-    python cli.py shell aditya-l1
+Three ways to ask a question, depending on how many you have.
+
+### One-shot: a single prompt
+
+    python cli.py query aditya-l1 "What are Aditya-L1's science objectives?"
+
+Retrieves, generates one cited answer, and exits. Useful flags:
+
+    -k <n>              how many chunks to retrieve (default 5)
+    --doc-types T ...   restrict to these document types
+    --subsystem S       restrict to one subsystem
+    --no-answer         show retrieved sources only, skip generation
+    --show-text         print the retrieved snippet text, not just citations
+    --model NAME        a different Ollama text model for the answer
+
+Against the public demo data that ships in `satellites/aditya-l1/`:
+
+    python cli.py query aditya-l1 "What payloads does Aditya-L1 carry?"
+    python cli.py query aditya-l1 "What launch vehicle was used, and from where was it launched?"
+    python cli.py query aditya-l1 "What is the deadline for the first AO cycle proposal?"
+    python cli.py query aditya-l1 "VELC payload" --doc-types OPS_MANUAL MOR
+    python cli.py query all "Aditya-L1 payloads"
+
+The examples below need a satellite with procedure and telecommand
+documents (FCP / TCH), which the shipped public demo data does not
+include — see "Adding a satellite":
+
+    python cli.py query chandrayaan-3 "how to switch on OBC"
+    python cli.py query chandrayaan-3 "which FCP covers gyro power on"
+    python cli.py query chandrayaan-3 "what commands were uplinked on 2026-06-09"
+    python cli.py query chandrayaan-3 "MRS recovery diagram"
 
 The query is routed before it is run. A date or a mention of commands
 goes to the telecommand store and comes back as records; everything else
 goes to the knowledge store. Asking for a diagram lifts figure captions;
 asking "how do I" pushes index rows below the procedures, while asking
 "which FCP" leaves them where they are.
+
+### Interactive: several questions in a row
+
+    python cli.py shell aditya-l1
+
+Loads the model and vector store once and takes one question after
+another, which avoids paying that startup cost per question. In-shell
+commands:
+
+    :sat <slug|all>    switch satellite (or search across all of them)
+    :k <n>             change how many chunks are retrieved
+    :doc <TYPE ...>    filter by document type, "off" to clear
+    :text              toggle showing retrieved snippet text
+    :exit              quit
+
+### Question sets: a file of questions, one answer each
+
+    python cli.py query aditya-l1 --file questions.txt
+
+`questions.txt` is one question per line; blank lines and lines starting
+with `#` are skipped. Runs each line through the same one-shot path as a
+single query — retrieve, generate a cited answer, print it — one after
+another. All the `query` flags above (`-k`, `--doc-types`, `--no-answer`,
+etc.) apply to every question in the file.
 
 
 ## Chunking
@@ -195,7 +280,7 @@ results in FCP when that is where the answer is.
 
 ## Embedding models
 
-    minilm-l6       384   fastest, best hybrid MRR in the Aditya-L1 benchmark
+    minilm-l6       384   fastest, best hybrid MRR in the confidential-corpus 100-question benchmark
     bge-m3         1024   multilingual, long context, heavy
     bge-large-en   1024   strong English-only
     mxbai-large    1024   strong English-only

@@ -32,6 +32,15 @@ satellites/*/vectorstore_*/
 models/*
 !models/.gitkeep
 
+# LoRA demo: QA pairs and comparison output are derived from document
+# chunks the same way satellites/*/extracted/ is, and the adapter weights
+# encode statistical traces of whatever it was trained on. Same
+# confidentiality boundary as above, just outside satellites/.
+lora/data/
+lora/comparison.json
+lora/results.json
+lora/adapters/
+
 .venv/
 venv/
 env/

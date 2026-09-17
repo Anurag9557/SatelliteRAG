@@ -63,8 +63,14 @@ def load(name: str = DEFAULT_MODEL, device: Optional[str] = None):
 
     try:
         from .registry import MODELS_DIR
-        model = CrossEncoder(name, device=device, max_length=MAX_LENGTH,
-                             cache_folder=str(MODELS_DIR))
+        try:
+            # Local-only first so a cached model never touches the network.
+            model = CrossEncoder(name, device=device, max_length=MAX_LENGTH,
+                                 cache_folder=str(MODELS_DIR),
+                                 local_files_only=True)
+        except Exception:
+            model = CrossEncoder(name, device=device, max_length=MAX_LENGTH,
+                                 cache_folder=str(MODELS_DIR))
     except TypeError:
         # Older sentence-transformers has no cache_folder on CrossEncoder.
         model = CrossEncoder(name, device=device, max_length=MAX_LENGTH)

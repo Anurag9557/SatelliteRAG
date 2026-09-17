@@ -1,20 +1,34 @@
 # Aditya-L1
 #
-# This file is optional. Documents in documents/ are recognised by name,
-# and everything below has a default. Edit only what you want to change.
+# This file is optional. Put the documents in documents/ and the
+# type of each one is recognised from its name.
+#
+# To point a document type at a specific file, add:
+#
+# documents:
+#   FCP:
+#     file: my_procedures.pdf
 
 name: Aditya-L1
 slug: aditya-l1
-
-# Embedding model. Run "python cli.py models" to see what is available,
-# "python cli.py prefetch <name>" to download one.
-# Changing this needs: python cli.py ingest aditya-l1 --reset
 embedding:
   model: minilm-l6
 
-# Chunk size per document type. Extraction emits whole sections; these
-# budgets are applied at ingest, so changing them needs a re-ingest but
-# not a re-extract.
+# The real Aditya-L1 mission documents are confidential, so this dataset
+# uses ISRO/ISSDC's public documents instead. They are generic prose
+# documents, so they are routed explicitly (config always wins over
+# filename detection) into the four generic slots rather than left for
+# filename-pattern guessing.
+documents:
+  MOR:
+    file: adityal1_mission_booklet_mor.pdf
+  OPS_MANUAL:
+    file: adityal1_spacecraft_orbit_ops_manual.pdf
+  GUIDELINES:
+    file: adityal1_announcement_of_opportunity_guidelines.pdf
+  HANDBOOK:
+    file: adityal1_mission_brochure_handbook.pdf
+
 chunking:
   FCP:
     max_chars: 2500
@@ -28,8 +42,9 @@ chunking:
   GUIDELINES:
     max_chars: 1200
     overlap: 200
-
-# Retrieval. These are query-time only, so no rebuild is needed.
+  HANDBOOK:
+    max_chars: 1200
+    overlap: 200
 retrieval:
   top_k: 5
   rrf_k: 60

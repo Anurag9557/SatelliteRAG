@@ -514,8 +514,13 @@ def format_hits(hits: list, show_satellite: bool = False,
         elif h.content_type == "image_caption":
             key = (h.satellite, "IMG", m.get("image_file", ""))
         else:
-            key = (h.satellite, m.get("fcp_number", ""),
-                   m.get("section_heading", "")[:40])
+            # fcp_number and section_heading are both blank for page-chunked
+            # fallback text (e.g. a prose PDF with no numbered headings), so
+            # falling back to the always-unique chunk_id there stops every
+            # such chunk from collapsing onto the same dedup key.
+            fcp_number, heading = m.get("fcp_number", ""), m.get("section_heading", "")
+            key = (h.satellite, fcp_number, heading[:40]) if (fcp_number or heading) \
+                else (h.satellite, "chunk", h.chunk_id)
         if key in seen:
             continue
         seen.add(key)
