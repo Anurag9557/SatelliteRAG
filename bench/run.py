@@ -74,7 +74,12 @@ def envelope(backend, profile: str, scenario: str, body: dict,
 
 
 def cmd_cache(args):
-    harness.build_context_cache(args.satellite, args.n, args.force)
+    # cli.py takes the satellite positionally everywhere, so anyone coming
+    # from it types "cache aditya-l1" and argparse rejects it. Accept both:
+    # the positional wins when given, otherwise --satellite, which already
+    # defaults to aditya-l1.
+    slug = getattr(args, "satellite_pos", None) or args.satellite
+    harness.build_context_cache(slug, args.n, args.force)
 
 
 def run_one(backend, scenario: str, args) -> None:
@@ -163,6 +168,9 @@ def main():
 
     p = sub.add_parser("cache", parents=[common],
                        help="retrieve once and store the context")
+    p.add_argument("satellite_pos", nargs="?", default=None,
+                   metavar="satellite",
+                   help="satellite slug (optional; --satellite also works)")
     p.set_defaults(func=cmd_cache)
 
     p = sub.add_parser("run", parents=[common],

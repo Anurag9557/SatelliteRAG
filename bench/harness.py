@@ -261,14 +261,19 @@ def scenario_quality(backend, records: list, max_tokens: int) -> dict:
     whether the answer pointed at a source at all, and whether it refused.
     Both are worth counting before anyone starts reading.
     """
-    from core.generate import NOT_FOUND_MESSAGE
+    # Named constant only in the newer core/generate.py. Older copies put
+    # the same sentence in SYSTEM_PROMPT without naming it, so fall back to
+    # the literal rather than making this scenario need a particular commit.
+    import core.generate as gen
+    not_found = getattr(gen, "NOT_FOUND_MESSAGE",
+                        "Not found in available documents.")
 
     cite = re.compile(r"\b(FCP[-\s]?\d{4}|p\.\s?\d+|MOR|OPS_MANUAL|"
                       r"GUIDELINES|HANDBOOK)\b", re.I)
     rows = []
     for i, rec in enumerate(records, 1):
         r = backend.chat(_messages(rec), max_tokens=max_tokens)
-        refused = NOT_FOUND_MESSAGE.lower() in r.text.lower()
+        refused = not_found.lower() in r.text.lower()
         rows.append({
             "id": rec["id"], "question": rec["question"],
             "answer": r.text, "ok": r.ok,

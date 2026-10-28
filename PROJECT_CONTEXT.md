@@ -418,4 +418,3 @@ file and save it as `.docx`.
 - `COMPARISON.md` — SatelliteRAG versus the previous pipeline, including
   the bugs found in both
 - `PROJECT_CONTEXT.md` — this file
-- `CHANGES.md` — superseded by `COMPARISON.md`, safe to delete

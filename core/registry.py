@@ -37,7 +37,10 @@ CONFIG_NAME = "satellite.yaml"
 
 # Document types every satellite is expected to have. A satellite may
 # have a subset; missing types are simply skipped during ingestion.
-DOC_TYPES = ["FCP", "MOR", "OPS_MANUAL", "GUIDELINES", "TCH"]
+# HANDBOOK is a generic prose type (same extract_prose_pdf() reader as
+# MOR/OPS_MANUAL/GUIDELINES) for satellites with more prose documents than
+# those three slots hold, e.g. Aditya-L1's public ISRO handbooks.
+DOC_TYPES = ["FCP", "MOR", "OPS_MANUAL", "GUIDELINES", "HANDBOOK", "TCH"]
 
 # Parser to use per file extension.
 PARSER_BY_SUFFIX = {
@@ -87,6 +90,7 @@ DEFAULT_CHUNKING = {
     "MOR":        {"max_chars": 1000, "overlap": 150},
     "OPS_MANUAL": {"max_chars": 1200, "overlap": 200},
     "GUIDELINES": {"max_chars": 1200, "overlap": 200},
+    "HANDBOOK":   {"max_chars": 1200, "overlap": 200},
 }
 
 DEFAULT_RETRIEVAL = {

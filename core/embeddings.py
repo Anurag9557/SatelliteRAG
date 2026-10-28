@@ -30,6 +30,18 @@ try:
 except Exception:
     pass
 
+# sentence-transformers forwards our (correct, non-deprecated) `cache_folder`
+# argument down into the underlying Transformer submodule as `cache_dir`,
+# then warns about its own internal renaming on every model load. Silence
+# just that one logger; nothing we pass triggers it directly.
+import logging
+try:
+    from transformers.utils import logging as _hf_logging
+    _hf_logging.get_logger("sentence_transformers.util.decorators").setLevel(
+        logging.ERROR)
+except Exception:
+    pass
+
 from .registry import MODELS_DIR
 
 
@@ -248,10 +260,19 @@ class Embedder:
                 str(local), device=self.device, **kwargs)
         else:
             # Not prefetched. Falls back to the shared cache folder, which
-            # still works offline once HuggingFace has it cached.
-            self._model = SentenceTransformer(
-                self.spec.hf_id, device=self.device,
-                cache_folder=str(MODELS_DIR), **kwargs)
+            # still works offline once HuggingFace has it cached. Try
+            # local-only first so a cached model never touches the network
+            # (and never prints the "unauthenticated requests" warning);
+            # only fall back to a live fetch if it is genuinely missing.
+            try:
+                self._model = SentenceTransformer(
+                    self.spec.hf_id, device=self.device,
+                    cache_folder=str(MODELS_DIR), local_files_only=True,
+                    **kwargs)
+            except Exception:
+                self._model = SentenceTransformer(
+                    self.spec.hf_id, device=self.device,
+                    cache_folder=str(MODELS_DIR), **kwargs)
 
         if self.device == "cuda":
             self._model.half()

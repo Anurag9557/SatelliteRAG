@@ -157,7 +157,7 @@ def load_extracted(satellite) -> tuple:
 
 
 def build_bm25(items: list, path: Path) -> None:
-    if not HAS_BM25:
+    if not HAS_BM25 or not items:
         return
     corpus = [tokenize(embed_text(it)) for it in items]
     ids    = [it.get("chunk_id") or it.get("record_id") for it in items]

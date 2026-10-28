@@ -26,7 +26,7 @@ import subprocess
 from pathlib import Path
 
 try:
-    import fitz  # PyMuPDF
+    import pymupdf as fitz
 except ImportError:
     raise SystemExit("Missing dependency: pip install pymupdf")
 
@@ -572,7 +572,7 @@ def extract(satellite, force: bool = False) -> dict:
 
     chunks, commands = [], []
 
-    for doc_type in ["FCP", "MOR", "OPS_MANUAL", "GUIDELINES", "TCH"]:
+    for doc_type in ["FCP", "MOR", "OPS_MANUAL", "GUIDELINES", "HANDBOOK", "TCH"]:
         entry = documents.get(doc_type)
         if not entry:
             continue

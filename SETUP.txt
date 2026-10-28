@@ -9,7 +9,7 @@ ONE-TIME SETUP
 
 1. Virtual environment
 
-       cd C:\Users\anura\Desktop\SatelliteRAG
+       cd SatelliteRAG
        py -3.11 -m venv .venv
        .venv\Scripts\activate
 
@@ -61,120 +61,22 @@ ONE-TIME SETUP
    save it as .docx by hand.
 
 
-PER SATELLITE
--------------
+FIRST RUN
+---------
 
-Everything is one command.
-
-    python cli.py new aditya-l1
-
-    copy the documents into satellites\aditya-l1\documents\
-    delete PUT_DOCUMENTS_HERE.txt
+satellites\aditya-l1\ ships with a small public ISRO demo dataset, so
+there is something to query right after setup:
 
     python cli.py build aditya-l1
+    python cli.py query aditya-l1 "What are Aditya-L1's science objectives?"
 
-build runs extraction, figure captioning and embedding in order, and
-prints a summary of each. Then:
-
-    python cli.py query aditya-l1 "how to switch on OBC"
-
-To add another satellite, the folder alone is enough. No config file, no
-filenames to type:
+To add another satellite, the folder alone is enough — no config file, no
+filenames to type in:
 
     satellites\chandrayaan-3\documents\   <- make it, copy documents in
     python cli.py build chandrayaan-3
 
-And for all of them at once:
-
-    python cli.py build all
-
-
-WHICH FILENAMES ARE RECOGNISED
-------------------------------
-
-    FCP           "FCP", "flight control procedure"
-    MOR           "MOR", "mission operations", "mission plan", "mission report"
-    OPS_MANUAL    "operations manual", "ops manual", "manual"
-    GUIDELINES    "guidelines", "guidance", "normal phase"
-    TCH           "TCH", "telecommand", "command history", or any .txt
-
-Case, underscores and camel case do not matter. AL1OperationsManual.docx,
-ops_manual.docx and CH3-Operations-Manual.docx all resolve to OPS_MANUAL.
-
-Check before building:
-
-    python cli.py scan
-
-Anything unrecognised is listed. Either rename it after its type, or map
-it in satellite.yaml:
-
-    documents:
-      FCP:
-        file: some_unusual_name.pdf
-
-
-WHAT BUILD DOES
----------------
-
-extract    Reads each document with the right parser. Procedure documents
-           give index rows plus procedures; report PDFs give sections;
-           Word files give sections and tables; the telecommand log gives
-           one record per command. Figures are saved to extracted\images\.
-
-caption    Describes each figure with the local vision model and stores
-           the description as a searchable chunk, which is what lets
-           "show me the recovery diagram" find an image. Resumes if
-           interrupted; re-running only handles new figures.
-
-ingest     Applies the per-document-type chunk sizes, embeds everything
-           and writes the vector store and keyword index.
-
-Any stage can be run alone when only that part needs redoing:
-
-    python cli.py extract aditya-l1 --force
-    python cli.py caption aditya-l1
-    python cli.py ingest  aditya-l1 --reset
-
-
-QUERYING
---------
-
-    python cli.py query aditya-l1 "how to switch on OBC"
-    python cli.py query aditya-l1 "which FCP covers gyro power on"
-    python cli.py query aditya-l1 "what commands were uplinked on 2026-06-09"
-    python cli.py query aditya-l1 "MRS recovery diagram"
-    python cli.py query aditya-l1 "safe mode" --doc-types GUIDELINES MOR
-    python cli.py query all "safe mode recovery"
-    python cli.py shell aditya-l1
-
-
-BATCH SIZE
-----------
-
-Chosen from the card's VRAM and the model's dimension:
-
-    VRAM     minilm-l6 (384)   1024-dim models
-    4 GB           32                16
-    6 GB           48                24
-    10 GB          64                32
-    24 GB         128                64
-    CPU            16                16
-
-If a batch still runs out of memory the size halves and retries, so a long
-build is not lost to one oversized batch.
-
-
-ALL COMMANDS
-------------
-
-    python cli.py models                    embedding model registry
-    python cli.py prefetch <name> ...       download models
-    python cli.py new <slug>                scaffold a satellite folder
-    python cli.py list                      state of every satellite
-    python cli.py scan [<slug>]             check document detection
-    python cli.py build <slug|all>          extract + caption + embed
-    python cli.py extract <slug|all>        documents to JSON
-    python cli.py caption <slug|all>        describe figures
-    python cli.py ingest <slug|all>         embed into the vector store
-    python cli.py query <slug|all> "..."    one-shot search
-    python cli.py shell <slug|all>          interactive search
+See README.md for: which filenames are recognised, what `build`'s three
+stages each do, the three ways to query (one-shot / interactive shell /
+a file of questions), chunk-size and embedding-model overrides, and the
+full command list.

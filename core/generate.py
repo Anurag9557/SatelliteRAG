@@ -15,8 +15,6 @@ tends to reply that it cannot, even though the figure was retrieved and
 is about to be displayed.
 """
 
-import re
-
 try:
     import ollama
     HAS_OLLAMA = True
@@ -28,18 +26,27 @@ from . import retrieve, router
 DEFAULT_MODEL = "qwen2.5:7b-instruct"
 NUM_CTX       = 8192
 
-SYSTEM_PROMPT = """You are a spacecraft operations assistant for mission control.
+# The literal refusal the model is instructed to give when nothing in the
+# retrieved context answers the query. cli.py matches on this to avoid
+# printing a "Sources:" list under an answer that cites none of them.
+NOT_FOUND_MESSAGE = "Not found in available documents."
+
+SYSTEM_PROMPT = f"""You are a spacecraft operations assistant for mission control.
 Answer using ONLY the provided context from official mission documents.
 
 Rules:
 - For procedures: cite the FCP number and list the steps explicitly,
   including command mnemonics and CID codes exactly as written.
-- For figures: name the diagram and its source document and page.
-- If the answer is not in the context, say "Not found in available
-  documents." Do not guess and do not fill gaps from general knowledge.
+- For figures: name the source document and page or section.
+- You may combine multiple facts from the context to answer a question
+  (comparisons, differences, summaries, lists, counts, etc.), as long as
+  every fact used is individually stated somewhere in the context.
+  Combining grounded facts is not guessing.
+- Only say "{NOT_FOUND_MESSAGE}" for the specific part of the question
+  the context genuinely does not address, not for a question the
+  context answers once its stated facts are combined.
 - Never speculate about spacecraft operations beyond what the documents
   state.
-- Say which document and section each claim comes from.
 - Keep answers concise and operationally precise."""
 
 
