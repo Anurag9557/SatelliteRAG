@@ -12,12 +12,11 @@ satellites embedded with different models still merge correctly.
 """
 
 import pickle
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from . import embeddings, rerank as reranker
+from . import embeddings, router, rerank as reranker
 from .ingest import COLLECTION_COMMANDS, COLLECTION_KNOWLEDGE, tokenize
 
 try:
@@ -80,94 +79,10 @@ class Hit:
         return " | ".join(parts)
 
 
-# Query understanding
-
-DATE_RE = re.compile(
-    r'\b(20\d{2})[-/\s](0[1-9]|1[0-2])[-/\s](0[1-9]|[12]\d|3[01])\b')
-
-# Order matters. The first pattern to match wins, so specific component
-# names come first and generic words last. "power" appears in almost
-# every switch-on question ("gyro power on", "wheel power on", "HGA motor
-# power on"), so a POWER entry matching a bare \bpower\b near the top
-# swallows every one of them and routes the query to the wrong subsystem.
-SUBSYSTEM_PATTERNS = [
-    ("DTG",        r'\bDTG\b|\bgyro\b|\bCSA\b'),
-    ("SENSOR",     r'\bstar\s*sensor\b|\bSS-?[12]\b'),
-    ("WHEEL",      r'\bwheel\b|\bWDE\b|\bsuspension\b|\bmomentum\s*dump'),
-    ("MECHANISM",  r'\bHGA\b|\bmechanism\b|\bSPDM\b|\bMCE\b|\bMEPU\b|\bdeploy'),
-    ("PROPULSION", r'\bthruster\b|\bpropulsion\b|\blatch\s*valve\b'
-                   r'|\boxidiser\b|\bpyro\b'),
-    ("TTC_XBAND",  r'\bTTC\b|\bX.band\b|\btransponder\b|\bTWTA\b|\bXBS\b'
-                   r'|\btone\s*ranging\b'),
-    ("ODHS",       r'\bODHS\b|\bSSR\b|\bDFU\b|\bBDH\b|\bdata\s*handling\b'),
-    ("PAYLOAD",    r'\bPAPA\b|\bASPEX\b|\bVELC\b|\bHELIOS\b|\bSOLEXS?\b'
-                   r'|\bSUIT\b|\bmagnetometer\b|\bpayload\b'),
-    ("OBC",        r'\bOBC\b|\bCPU\b|\bEEPROM\b|\bwatchdog\b'
-                   r'|\btelecommand\s*link\b'),
-    ("AOCS",       r'\bAOCS\b|\bsun\s*acquisition\b|\battitude\b'
-                   r'|\brate\s*damp'),
-    # Generic last. A bare "power" is too weak a signal to route on.
-    ("POWER",      r'\bFPGA\b|\bTCR\b|\bDC.DC\b|\bbattery\b'
-                   r'|\bpower\s*(system|bus|supply)\b'),
-]
-
-DIAGRAM_RE = re.compile(
-    r'\b(diagram|figure|chart|plot|image|picture|schematic|flow\s*chart|'
-    r'block\s*diagram|show\s+me|visual)\b', re.IGNORECASE)
-
-# A question that asks how to do something wants the procedure itself.
-# Without this, a manual section that merely mentions the subsystem
-# competes on equal terms with the procedure that answers the question.
-HOWTO_RE = re.compile(
-    r'\b(fcp|procedure|how\s+to|how\s+do|how\s+is|steps?|switch\w*|'
-    r'power\w*|turn\w*|enabl\w*|disabl\w*|reset|select\w*|activat\w*|'
-    r'deactivat\w*|operat\w*|execut\w*|configur\w*|uplink\w*|command\w*)\b',
-    re.IGNORECASE)
-
-
-def wants_commands(query: str) -> bool:
-    """
-    Route to the telecommand log only on a real command-log signal.
-
-    A bare "command" is far too weak: "programmable command sequencer",
-    "configurable command block" and "telecommand link test" are all
-    procedure questions, and sending them to the command store loses them
-    entirely. The phrasing has to be about commands that were uplinked,
-    a CID, or a date.
-    """
-    if DATE_RE.search(query):
-        return True
-    return bool(re.search(
-        r'\bcommands?\s+(were\s+|that\s+were\s+)?(uplink|sent|issued|executed)'
-        r'|\buplinked\s+(on|from|to)\b'
-        r'|\btelecommand\s+history\b|\bcommand\s+history\b'
-        r'|\bCID\s+[A-Z]{2,}\d+|\borbit\s+\d{3,}\b',
-        query, re.IGNORECASE))
-
-
-def find_date(query: str) -> Optional[str]:
-    m = DATE_RE.search(query)
-    return f"{m.group(1)}-{m.group(2)}-{m.group(3)}" if m else None
-
-
-def find_subsystem(query: str) -> Optional[str]:
-    for sub, pattern in SUBSYSTEM_PATTERNS:
-        if re.search(pattern, query, re.IGNORECASE):
-            return sub
-    return None
-
-
-def wants_diagram(query: str) -> bool:
-    return bool(DIAGRAM_RE.search(query))
-
-
-def wants_procedure(query: str) -> bool:
-    return bool(HOWTO_RE.search(query))
-
-
 # Store access
 
 _clients = {}
+_command_values = {}
 
 
 def _collections(satellite):
@@ -186,6 +101,20 @@ def _collections(satellite):
             client.get_collection(COLLECTION_COMMANDS),
         )
     return _clients[satellite.slug]
+
+
+def _known_command_values(satellite, col_c) -> dict:
+    """
+    The CIDs and mnemonics this satellite's log actually holds, read once.
+    Keyed upper-case, mapped to the value exactly as stored.
+    """
+    if satellite.slug not in _command_values:
+        metas = col_c.get(include=["metadatas"]).get("metadatas") or []
+        _command_values[satellite.slug] = {
+            key: {str(m[key]).upper(): m[key] for m in metas if m.get(key)}
+            for key in ("cid", "mnemonic")
+        }
+    return _command_values[satellite.slug]
 
 
 def _where(doc_types=None, subsystem=None, date=None) -> Optional[dict]:
@@ -226,7 +155,8 @@ def dense_search(query, collection, satellite, k, where=None) -> list:
 
 
 def bm25_search(query, pkl_path: Path, satellite, k,
-                doc_types=None, subsystem=None, date=None) -> list:
+                doc_types=None, subsystem=None, date=None,
+                content_types=None) -> list:
     if not pkl_path.exists():
         return []
     try:
@@ -243,13 +173,13 @@ def bm25_search(query, pkl_path: Path, satellite, k,
             break
         item = data["items"][idx]
 
-        # Apply the same filters the dense pass used. UNKNOWN subsystem is
-        # kept because it means detection failed, not that it is wrong.
         # Apply exactly the filters the dense pass used. Letting UNKNOWN
         # through here would make the keyword pass more permissive than
         # the semantic one, so chunks the semantic filter excluded would
         # still reach the results through BM25.
         if doc_types and item.get("source_doc") not in doc_types:
+            continue
+        if content_types and item.get("content_type") not in content_types:
             continue
         if subsystem and item.get("subsystem") != subsystem:
             continue
@@ -305,59 +235,57 @@ def prepend(primary: list, extra: list, n: int = 2) -> list:
     return out
 
 
-def boost_captions(hits: list, factor: float = 1.5) -> list:
-    """Push image captions up when the question asks for a diagram."""
-    for h in hits:
-        if h.content_type == "image_caption":
-            h.score *= factor
-    return sorted(hits, key=lambda h: -h.score)
-
-
-def boost_procedures(hits: list, factor: float = 1.6) -> list:
+def search_commands(satellite, query: str, plan, top_k: int) -> list:
     """
-    Lift the procedures when the question asks how to do something.
-    Notes count too: a procedure keeps its notes page, and both answer
-    the same question.
-    """
-    for h in hits:
-        if h.content_type in ("procedure", "note"):
-            h.score *= factor
-    return sorted(hits, key=lambda h: -h.score)
+    Search the telecommand log.
 
+    Exact values in the plan (date, CID, mnemonic) are read straight from
+    the store, every matching record in time order: "what was sent on
+    <date>" wants the whole day, not the five records most similar to the
+    wording. Without them, or when they match nothing, the log is searched
+    like any other store.
+    """
+    cfg      = satellite.retrieval
+    _, col_c = _collections(satellite)
+    known    = _known_command_values(satellite, col_c)
 
-def demote_index_rows(hits: list, factor: float = 0.75) -> list:
-    """
-    A table-of-contents row matches almost any procedure question,
-    because it is little more than the title. It should sit below the
-    procedure itself, but only just: an index row that both retrievers
-    rank first is the strongest evidence available about which procedure
-    the question is about, and a harsh penalty throws that away.
-    """
-    if all(h.content_type == "toc_index" for h in hits):
-        return hits
-    for h in hits:
-        if h.content_type == "toc_index":
-            h.score *= factor
-    return sorted(hits, key=lambda h: -h.score)
+    clauses = []
+    if plan.date:
+        clauses.append({"date": {"$eq": plan.date}})
+    # A CID or mnemonic the log does not hold would empty the result, so
+    # only values the store actually contains become filters.
+    for key in ("cid", "mnemonic"):
+        stored = known[key].get((getattr(plan, key) or "").upper())
+        if stored:
+            clauses.append({key: {"$eq": stored}})
 
+    if clauses:
+        where = clauses[0] if len(clauses) == 1 else {"$and": clauses}
+        got   = col_c.get(where=where, include=["documents", "metadatas"])
+        ids   = got.get("ids") or []
+        docs  = got.get("documents") or []
+        metas = got.get("metadatas") or []
+        if metas:
+            order = sorted(range(len(metas)), key=lambda i: (
+                metas[i].get("date", ""), metas[i].get("time", "")))
+            return [Hit(chunk_id=ids[i], text=docs[i] or "", score=1.0,
+                        satellite=satellite.slug, metadata=metas[i])
+                    for i in order]
 
-def asks_which_procedure(query: str) -> bool:
-    """
-    'which FCP covers X' wants the index; 'how do I do X' wants the
-    procedure. Only the first should see index rows ranked normally.
-    """
-    return bool(re.search(
-        r'\b(which|what)\s+(fcp|procedure|number)\b|'
-        r'\bfcp\s+(number|list|index)\b|\blist\s+(all\s+)?(fcp|procedures)\b',
-        query, re.IGNORECASE))
+    where = _where(date=plan.date)
+    dense = dense_search(query, col_c, satellite, cfg["n_dense"], where)
+    keyw  = bm25_search(
+        query, satellite.vectorstore_dir / "bm25_commands.pkl",
+        satellite, cfg["n_bm25"], date=plan.date)
+    return rrf([dense, keyw], cfg["rrf_k"])[:top_k]
 
 
 def search_one(satellite, query: str, top_k=None, doc_types=None,
-               subsystem=None, force_target=None, mode="hybrid") -> list:
+               subsystem=None, plan=None, mode="hybrid") -> list:
     """
-    Hybrid search within a single satellite.
+    Search within a single satellite, following the query plan.
 
-    mode selects which passes run:
+    mode selects which passes run over the documents:
         hybrid  dense + BM25 fused by RRF, the shipping pipeline
         dense   semantic only, which is what isolates the embedding model
         bm25    keyword only, an embedder-independent floor
@@ -366,42 +294,20 @@ def search_one(satellite, query: str, top_k=None, doc_types=None,
     not depend on the embedder at all, so it masks the difference between
     one model and another.
     """
-    cfg          = satellite.retrieval
-    top_k        = top_k or cfg["top_k"]
-    col_k, col_c = _collections(satellite)
+    cfg   = satellite.retrieval
+    top_k = top_k or cfg["top_k"]
+    plan  = plan or router.plan(query, cfg)
 
-    target = force_target or (
-        "commands" if wants_commands(query) else "knowledge")
+    commands = []
+    if "commands" in plan.stores:
+        commands = search_commands(satellite, query, plan, top_k)
+        # Nothing in the log for a log question: the documents may still
+        # answer it, so fall through rather than return nothing.
+        if plan.stores == ["commands"] and commands:
+            return commands
 
-    if target == "commands":
-        date = find_date(query)
-
-        # "What commands on <date>" wants the whole day, not the five most
-        # semantically similar records. With a date, read every matching
-        # record straight from the store in chronological order.
-        if date:
-            got = col_c.get(where={"date": {"$eq": date}},
-                            include=["documents", "metadatas"])
-            metas = got.get("metadatas") or []
-            ids   = got.get("ids") or []
-            docs  = got.get("documents") or []
-            if metas:
-                order = sorted(range(len(metas)),
-                               key=lambda i: metas[i].get("time", ""))
-                return [Hit(
-                    chunk_id  = ids[i] if i < len(ids) else "",
-                    text      = docs[i] if i < len(docs) else "",
-                    score     = 1.0,
-                    satellite = satellite.slug,
-                    metadata  = metas[i],
-                ) for i in order]
-
-        where = _where(date=date)
-        dense = dense_search(query, col_c, satellite, cfg["n_dense"], where)
-        keyw  = bm25_search(
-            query, satellite.vectorstore_dir / "bm25_commands.pkl",
-            satellite, cfg["n_bm25"], date=date)
-        return rrf([dense, keyw], cfg["rrf_k"])[:top_k]
+    col_k, _ = _collections(satellite)
+    bm25_pkl = satellite.vectorstore_dir / "bm25_knowledge.pkl"
 
     # The subsystem is only used as a filter when the caller asks for one.
     #
@@ -423,14 +329,26 @@ def search_one(satellite, query: str, top_k=None, doc_types=None,
         sub   = None
 
     keyw = [] if mode == "dense" else bm25_search(
-        query, satellite.vectorstore_dir / "bm25_knowledge.pkl",
-        satellite, cfg["n_bm25"], doc_types=doc_types, subsystem=sub)
+        query, bm25_pkl, satellite, cfg["n_bm25"],
+        doc_types=doc_types, subsystem=sub)
 
-    merged = rrf([dense, keyw], cfg["rrf_k"])
+    fcp_only  = {"doc_type": {"$eq": "FCP"}}
+    wants_fcp = not doc_types or "FCP" in doc_types
 
-    # Reranking reads each candidate against the question, so it orders
-    # them far better than fusion arithmetic can. On the 100-question
-    # bench it lifted Hit@1 from 0.65 to 0.82.
+    # The soft router never decides whether a question wants a procedure.
+    # The procedure document is searched for every question and fused as a
+    # third list, so an FCP chunk that is genuinely relevant rises on its
+    # own and nothing is forced to the top.
+    lists = [dense, keyw]
+    if plan.router == "soft" and mode == "hybrid" and wants_fcp:
+        lists.append(dense_search(
+            query, col_k, satellite, cfg["n_dense"], fcp_only))
+    merged = rrf(lists, cfg["rrf_k"])
+
+    # Reranking reads each candidate against the question, which fusion
+    # arithmetic cannot. On the 100-question bench it sharpens the first
+    # position and can cost a place in the top five, so it is a setting
+    # rather than a given; results/ has the numbers.
     #
     # It runs before the content-type rules rather than instead of them.
     # A cross-encoder rates an index row highly for a procedure question,
@@ -443,11 +361,18 @@ def search_one(satellite, query: str, top_k=None, doc_types=None,
                                  model_name=cfg.get("rerank_model",
                                                     reranker.DEFAULT_MODEL))
 
-    # A diagram request wants the figure itself at the front, so search the
-    # captions directly rather than hoping fusion floats one up.
-    if wants_diagram(query):
-        caps = dense_search(query, col_k, satellite, 3,
-                            {"content_type": {"$eq": "image_caption"}})
+    # A diagram request wants the figure itself at the front. Captions are
+    # short, and a dense search alone missed some of them, so both passes
+    # run over captions only and the best two go first.
+    if plan.intent == "figure":
+        caption_only = {"content_type": {"$eq": "image_caption"}}
+        caps = rrf([
+            [] if mode == "bm25" else dense_search(
+                query, col_k, satellite, 3, caption_only),
+            [] if mode == "dense" else bm25_search(
+                query, bm25_pkl, satellite, 3,
+                content_types=("image_caption",)),
+        ], cfg["rrf_k"])
         merged = prepend(merged, caps, 2)
 
     # A procedure question wants the procedure document, and in these files
@@ -459,30 +384,40 @@ def search_one(satellite, query: str, top_k=None, doc_types=None,
     # This is a recall step, not a ranking one. Procedure chunks are short,
     # so a longer manual section that merely mentions the subsystem beats
     # them on fusion even for a near-exact title match.
-    if wants_procedure(query):
-        procs = dense_search(query, col_k, satellite, 3,
-                             {"source_doc": {"$eq": "FCP"}})
+    if (plan.intent in ("procedure", "which_procedure")
+            and plan.router != "soft" and wants_fcp):
+        procs = dense_search(query, col_k, satellite, 3, fcp_only)
         merged = prepend(merged, procs, 2)
 
+    if commands:
+        merged = rrf([merged, commands], cfg["rrf_k"])
     return merged[:top_k]
 
 
 def search(satellites: list, query: str, top_k: int = 5,
-           doc_types=None, subsystem=None, mode: str = "hybrid") -> list:
+           doc_types=None, subsystem=None, mode: str = "hybrid",
+           plan=None) -> list:
     """
     Search one or many satellites. With several, each is searched
     independently and the ranked lists are fused, so no satellite can
     dominate purely because its store is larger.
+
+    The question is routed once, with the first satellite's settings, and
+    every satellite follows that plan.
     """
+    if not satellites:
+        return []
+    plan = plan or router.plan(query, satellites[0].retrieval)
+
     if len(satellites) == 1:
         return search_one(satellites[0], query, top_k, doc_types, subsystem,
-                          mode=mode)
+                          plan=plan, mode=mode)
 
     per_satellite = []
     for sat in satellites:
         try:
             hits = search_one(sat, query, top_k * 2, doc_types, subsystem,
-                              mode=mode)
+                              plan=plan, mode=mode)
             if hits:
                 per_satellite.append(hits)
         except FileNotFoundError:
@@ -531,10 +466,21 @@ def format_hits(hits: list, show_satellite: bool = False,
 
 
 def build_context(hits: list, show_satellite: bool = False,
-                  char_budget: int = 2000) -> str:
-    """Assemble retrieved chunks into a prompt context block."""
-    blocks = []
+                  char_budget: int = 2000, total_budget: int = 16000) -> str:
+    """
+    Assemble retrieved chunks into a prompt context block.
+
+    A command-log lookup can return a whole day of records, far more than
+    the model's context window holds, so the block stops at total_budget
+    characters and says how many sources were left out.
+    """
+    blocks, used = [], 0
     for i, h in enumerate(hits, 1):
-        blocks.append(f"[Source {i} | {h.cite(show_satellite)}]\n"
-                      f"{h.text.strip()[:char_budget]}")
+        block = (f"[Source {i} | {h.cite(show_satellite)}]\n"
+                 f"{h.text.strip()[:char_budget]}")
+        if blocks and used + len(block) > total_budget:
+            blocks.append(f"[{len(hits) - i + 1} further sources not shown]")
+            break
+        blocks.append(block)
+        used += len(block)
     return "\n\n".join(blocks)

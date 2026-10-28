@@ -33,7 +33,7 @@ def load_all() -> list:
             "reranker": "none",
             "mode":     agg.get("mode", "dense"),
             "dim":      agg.get("dim", ""),
-            "recall":   agg.get("hit@10", ""),
+            "recall":   agg.get("recall", agg.get("hit@10", "")),
             "hit@1":    agg["hit@1"], "hit@3": agg["hit@3"],
             "hit@5":    agg["hit@5"], "hit@10": agg["hit@10"],
             "mrr":      agg["mrr"],

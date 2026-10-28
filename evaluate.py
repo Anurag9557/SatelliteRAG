@@ -7,6 +7,7 @@ and reports Hit@1/3/5/10 and MRR.
     python evaluate.py                          aditya-l1, current settings
     python evaluate.py --satellite chandrayaan-3
     python evaluate.py --rerank off             measure without the reranker
+    python evaluate.py --router soft            try another router
     python evaluate.py --compare                both, side by side
     python evaluate.py --csv results/eval.csv
 
@@ -60,7 +61,7 @@ def first_rank(hits: list, accept: list) -> int:
 
 def label(hit) -> str:
     m = hit.metadata or {}
-    bits = [m.get("source_doc", "")]
+    bits = [m.get("doc_type", "")]
     if m.get("fcp_number"):
         bits.append(f"FCP-{m['fcp_number']}")
     if m.get("page"):
@@ -77,11 +78,13 @@ def run(satellite, pool: int = 10, cases: list = None) -> list:
         rows.append({
             "id":       case["id"],
             "question": case["q"],
+            "intent":   case.get("intent", ""),
             "rank":     rank,
             "hit@1":    int(rank == 1),
             "hit@3":    int(1 <= rank <= 3),
             "hit@5":    int(1 <= rank <= 5),
-            "hit@10":   int(rank >= 1),
+            # Ranks 1-10 only. Found anywhere in a larger pool is recall.
+            "hit@10":   int(1 <= rank <= 10),
             "rr":       (1.0 / rank) if rank else 0.0,
             "top":      label(hits[0]) if hits else "",
             "note":     case.get("note", ""),
@@ -97,6 +100,7 @@ def aggregate(rows: list) -> dict:
         "hit@3":  sum(r["hit@3"]  for r in rows) / n,
         "hit@5":  sum(r["hit@5"]  for r in rows) / n,
         "hit@10": sum(r["hit@10"] for r in rows) / n,
+        "recall": sum(1 for r in rows if r["rank"] >= 1) / n,
         "mrr":    sum(r["rr"]     for r in rows) / n,
         "misses": [r["id"] for r in rows if r["rank"] == 0],
     }
@@ -123,10 +127,25 @@ def report(rows: list, agg: dict, title: str) -> None:
     # Recall is the ceiling: a chunk that never enters the pool cannot be
     # ranked into first place, however good the reranker is. Reporting it
     # separates "retrieval did not find it" from "ranking put it low".
-    print(f"  Recall     : {agg['hit@10']*100:5.1f}%   (ceiling for any reranker)")
+    print(f"  Recall     : {agg['recall']*100:5.1f}%   "
+          f"(found in the pool; the ceiling for any reranker)")
     if agg["misses"]:
         print(f"  Missed     : {', '.join(agg['misses'])}")
+    by_intent(rows)
     print("=" * 92)
+
+
+def by_intent(rows: list) -> None:
+    """The same metrics, split by what each question asks for."""
+    intents = sorted({r["intent"] for r in rows if r.get("intent")})
+    if not intents:
+        return
+    print(f"\n  {'intent':<18}{'n':>4}{'H@1':>8}{'H@5':>8}{'MRR':>8}")
+    for intent in intents:
+        sel = [r for r in rows if r["intent"] == intent]
+        agg = aggregate(sel)
+        print(f"  {intent:<18}{len(sel):>4}{agg['hit@1']*100:7.0f}%"
+              f"{agg['hit@5']*100:7.0f}%{agg['mrr']:8.3f}")
 
 
 def rescue_view(off_rows: list, on_rows: list) -> None:
@@ -186,6 +205,12 @@ def set_rerank(satellite, on: bool) -> None:
     retrieve._clients.clear()
 
 
+def set_router(satellite, mode: str) -> None:
+    cfg = dict(satellite.config.get("retrieval") or {})
+    cfg["router"] = mode
+    satellite.config["retrieval"] = cfg
+
+
 def widen(satellite, n: int) -> None:
     """
     Widen the candidate pool the reranker sees.
@@ -211,6 +236,9 @@ def main():
                     help="override the satellite's rerank setting")
     ap.add_argument("--compare", action="store_true",
                     help="run with and without the reranker, side by side")
+    ap.add_argument("--router", choices=["rules", "soft", "llm"],
+                    default=None,
+                    help="override the satellite's router setting")
     ap.add_argument("--csv", default=None, help="write per-question rows here")
     ap.add_argument("--json", default=None, help="write the summary here")
     ap.add_argument("--negatives", action="store_true",
@@ -227,11 +255,15 @@ def main():
 
     if args.widen:
         widen(sat, args.widen)
+    if args.router:
+        set_router(sat, args.router)
 
     print(f"\n  satellite : {sat.slug}")
     print(f"  embedder  : {sat.embedding_model}")
+    print(f"  router    : {sat.retrieval['router']}")
     print(f"  questions : {len(TEST_SET)}")
-    print(f"  pool      : {sat.retrieval['n_dense']} per pass")
+    print(f"  pool      : {sat.retrieval['n_dense']} per pass, "
+          f"{args.pool} scored")
 
     if args.compare:
         results = {}
@@ -282,7 +314,10 @@ def main():
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(
             {"satellite": sat.slug, "embedder": sat.embedding_model,
-             "summary": agg, "rows": rows}, indent=2), encoding="utf-8")
+             "router": sat.retrieval["router"],
+             "rerank": sat.retrieval.get("rerank", True),
+             "pool": args.pool, "summary": agg, "rows": rows},
+            indent=2), encoding="utf-8")
         print(f"  summary JSON     -> {path}")
 
 

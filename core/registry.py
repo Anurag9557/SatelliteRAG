@@ -95,11 +95,16 @@ DEFAULT_RETRIEVAL = {
     "n_dense": 20,
     "n_bm25":  20,
     # A cross-encoder re-scores the fused candidates by reading each one
-    # against the question. On the 100-question bench this lifted Hit@1
-    # from 0.65 to 0.82. Set false to fall back to fusion order alone.
+    # against the question. It sharpens the first result and can push a
+    # correct passage out of the top five; results/ has both sides. Set
+    # false to fall back to fusion order alone.
     "rerank":      True,
     "rerank_pool": 20,
     "rerank_model": "cross-encoder/ms-marco-MiniLM-L-6-v2",
+    # How a question is routed before searching: rules, soft or llm.
+    # See core/router.py.
+    "router":       "rules",
+    "router_model": "qwen2.5:7b-instruct",
 }
 
 DEFAULT_MODEL = "minilm-l6"

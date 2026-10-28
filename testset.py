@@ -60,7 +60,7 @@ TEST_SET = [
                                        "payload operation guideline"]}],
      "note": "manual / guidelines payload section"},
     {"id": "orbit", "q": "What are the Aditya-L1 orbit constraints?",
-     "accept": [{"source_doc": "MOR",
+     "accept": [{"doc_type": "MOR",
                  "text_contains_any": ["halo orbit", "sun earth line",
                                        "orbit constraint"]}],
      "note": "halo-orbit design and selection"},
@@ -174,3 +174,51 @@ NEGATIVE_CASES = [
     {"id": "neg_chair", "q": "Who is the current chairman of ISRO?",
      "accept": [], "note": "expect not-found"},
 ]
+
+
+# Routing labels
+#
+# What each question asks for, judged from its wording rather than from
+# the document that happens to hold the answer: "What is IAC mode?" is a
+# concept question even though a procedure answers it. A few are
+# judgement calls (rate_damp, camera_config, stellar_cal, rw_logics,
+# orbit_models). evaluate_router.py scores the routers against these.
+INTENT_LABELS = {
+    "procedure": """
+        obc_on obc_reset obc_cpu tc_link tone_rng star_ss1 gyro_on
+        latch_valve suit_on obc_scrub obc_wdt tm_prog eeprom_mgmt sun_acq
+        wheel_on wheel_unload star_ss2 xband_t1 solexs_on velc_on
+        obc_thermistor obc_pwr_interrupt diff_time_tag event_uplink_exec
+        obt_commanding bus1553_sel msg1553 block_checksum ccb ebc obc_fdi
+        rate_damp normal_modes_nohapss auto_firing manual_thruster
+        auto_momentum gyro_cal mrs_enable gyro_bias csa_main fpga_power
+        papa_on aspex_swis helios_on odhs_on odhs_record obs_id
+        camera_config apss_on velc_occulter
+    """,
+    "which_procedure": "hga_motors mag_on",
+    "figure": """
+        mrs_diagram odhs_diag prop_diag suit_diag heater_chart
+        thruster_cosines pressure_valves od_residue
+    """,
+    "command_history": """
+        cmds_date cmds_obc cmds_dtg cmd_cid cmd_mep cmd_station
+    """,
+    "concept": """
+        safety payload_gl orbit fdir safe_mode halo crtbp station_keep
+        thermal power_budget energy_bal pcs iac_mode rw_logics orbit_models
+        mission_overview mission_phases l1_insertion transfer_traj
+        orbit_det prop_budget hapss pointing_budget bus_ctrl_fdir
+        power_safe_mode crab_pointing suit_desc config_before_safe
+        stellar_cal moi hard_emergency thermal_limits xband_system
+        momentum_bias
+    """,
+}
+
+_listed = [qid for ids in INTENT_LABELS.values() for qid in ids.split()]
+if sorted(_listed) != sorted(case["id"] for case in TEST_SET):
+    raise ValueError("INTENT_LABELS must name every question exactly once")
+
+_intent_of = {qid: intent for intent, ids in INTENT_LABELS.items()
+              for qid in ids.split()}
+for _case in TEST_SET:
+    _case["intent"] = _intent_of[_case["id"]]

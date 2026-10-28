@@ -23,7 +23,7 @@ try:
 except ImportError:
     HAS_OLLAMA = False
 
-from . import retrieve
+from . import retrieve, router
 
 DEFAULT_MODEL = "qwen2.5:7b-instruct"
 NUM_CTX       = 8192
@@ -44,13 +44,16 @@ Rules:
 
 
 def answer_from_caption(hits: list) -> str:
-    """Compose a reply directly from the best image caption."""
-    caps = [h for h in hits if h.content_type == "image_caption"]
-    if not caps:
+    """
+    Compose a reply directly from the top-ranked hit when it is a figure
+    caption. A caption further down the list is not what the question is
+    about, so it is not answered from.
+    """
+    if not hits or hits[0].content_type != "image_caption":
         return ""
-    best = caps[0]
+    best = hits[0]
     meta = best.metadata or {}
-    where = meta.get("source_doc", "the documents")
+    where = meta.get("doc_type") or "the documents"
     if meta.get("page"):
         where += f", page {meta['page']}"
     return (f"Here is the figure matching your request (from {where}):\n\n"
@@ -59,13 +62,14 @@ def answer_from_caption(hits: list) -> str:
 
 
 def generate(query: str, hits: list, model: str = DEFAULT_MODEL,
-             show_satellite: bool = False) -> str:
+             show_satellite: bool = False, plan=None) -> str:
     """Turn retrieved passages into a cited answer."""
     if not hits:
         return "No relevant documents found."
 
     # A figure request is answered from the caption, not the text model.
-    if retrieve.wants_diagram(query):
+    plan = plan or router.rule_plan(query)
+    if plan.intent == "figure":
         reply = answer_from_caption(hits)
         if reply:
             return reply
@@ -97,10 +101,18 @@ def generate(query: str, hits: list, model: str = DEFAULT_MODEL,
 
 
 def ask(satellites: list, query: str, top_k: int = 5, doc_types=None,
-        subsystem=None, model: str = DEFAULT_MODEL) -> tuple:
-    """Retrieve then answer. Returns (answer, hits)."""
-    hits = retrieve.search(satellites, query, top_k=top_k,
-                           doc_types=doc_types, subsystem=subsystem)
+        subsystem=None, model: str = DEFAULT_MODEL, plan=None) -> tuple:
+    """
+    Route, retrieve, then answer. Returns (answer, hits).
+
+    The question is routed once and the same plan drives retrieval and
+    generation. Pass a plan to reuse one the caller already made.
+    """
+    plan  = plan or router.plan(query, satellites[0].retrieval)
+    hits  = retrieve.search(satellites, query, top_k=top_k,
+                            doc_types=doc_types, subsystem=subsystem,
+                            plan=plan)
     reply = generate(query, hits, model=model,
-                     show_satellite=len(satellites) > 1)
+                     show_satellite=len(satellites) > 1, plan=plan)
+    router.log_plan(query, plan, hits)
     return reply, hits

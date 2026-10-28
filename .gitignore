@@ -52,5 +52,24 @@ Thumbs.db
 .idea/
 .vscode/
 
+# The routing log holds the questions people asked, and runs/ holds
+# per-question evaluation output, which repeats the question text.
+logs/
+runs/
+
 # Results ARE tracked: they hold metrics and short labels only
 # (for example "FCP-5201 / p.1 / toc_index"), never document text.
+
+# ---------------------------------------------------------------------
+# Benchmark (bench/)
+#
+# The context cache holds the retrieved passages and the scenario JSONs
+# hold generated answers. Both carry document text, the same as
+# satellites/*/extracted/ above.
+#
+# comparison.csv and comparison.md are aggregate numbers only, so they
+# stay tracked and are the files meant to be shared.
+# ---------------------------------------------------------------------
+
+bench/cache/
+bench/results/*.json

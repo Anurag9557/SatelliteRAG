@@ -52,7 +52,7 @@ def score(satellite, pool: int, mode: str) -> tuple:
             "hit@1":  int(rank == 1),
             "hit@3":  int(1 <= rank <= 3),
             "hit@5":  int(1 <= rank <= 5),
-            "hit@10": int(rank >= 1),
+            "hit@10": int(1 <= rank <= 10),
             "rr":     (1.0 / rank) if rank else 0.0,
             "top":    label(hits[0]) if hits else "",
         })

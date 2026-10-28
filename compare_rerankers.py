@@ -10,13 +10,14 @@ them against several cross-encoders.
     python compare_rerankers.py --embedders minilm-l6 bge-base-en
     python compare_rerankers.py --rerankers none ms-marco-L-6 bge-base
 
-The candidate pool is retrieved ONCE per embedder and every reranker is
-applied to that same cached pool. Retrieval is the slow part, so this
-makes the comparison both fair and much faster than re-running the
-pipeline per pair: every reranker is judged on identical candidates.
+Every combination runs the full pipeline, with the reranker inside it.
+An earlier version retrieved a pool once and reranked that cached list,
+which was faster but measured a different order from the one that ships:
+the pipeline reranks first and then puts figure and procedure chunks in
+front, while reranking a cached list let the cross-encoder move them.
 
-Recall is fixed by the pool and printed per embedder. It is the ceiling:
-no reranker can place a chunk that retrieval never returned.
+Recall (found anywhere in the pool) is printed per run. It is the
+ceiling: no reranker can place a chunk that retrieval never returned.
 """
 
 import argparse
@@ -53,60 +54,44 @@ DEFAULT_RERANKERS = ["none", "ms-marco-L-4", "ms-marco-L-6",
 POOL = 20      # candidates retrieved per question, and reranked
 
 
-def retrieve_pool(satellite, pool: int, mode: str) -> list:
-    """
-    Retrieve once for every question, with reranking off.
-    Returns [(case, hits), ...] to be reordered by each reranker.
-    """
+def configure(satellite, rerank_model=None, router_mode=None) -> None:
+    """Point the pipeline at one reranker; None switches reranking off."""
     cfg = dict(satellite.config.get("retrieval") or {})
-    cfg["rerank"] = False
+    cfg["rerank"] = rerank_model is not None
+    if rerank_model:
+        cfg["rerank_model"] = rerank_model
+    if router_mode:
+        cfg["router"] = router_mode
     satellite.config["retrieval"] = cfg
-    retrieve._clients.clear()
-
-    cases = []
-    for case in TEST_SET:
-        hits = retrieve.search([satellite], case["q"], top_k=pool, mode=mode)
-        cases.append((case, hits))
-    return cases
 
 
-def score_ranked(cases: list, reorder=None) -> tuple:
+def retrieve_all(satellite, pool: int, mode: str) -> list:
+    """Run the pipeline once per question. Returns [(case, hits), ...]."""
+    return [(case, retrieve.search([satellite], case["q"], top_k=pool,
+                                   mode=mode))
+            for case in TEST_SET]
+
+
+def score_ranked(cases: list) -> tuple:
     rows = []
     for case, hits in cases:
-        ordered = reorder(case["q"], hits) if reorder else hits
-        rank = first_rank(ordered, case["accept"]) if case["accept"] else 0
+        rank = first_rank(hits, case["accept"]) if case["accept"] else 0
         rows.append({
             "id":     case["id"],
             "rank":   rank,
             "hit@1":  int(rank == 1),
             "hit@3":  int(1 <= rank <= 3),
             "hit@5":  int(1 <= rank <= 5),
-            "hit@10": int(rank >= 1),
+            "hit@10": int(1 <= rank <= 10),
             "rr":     (1.0 / rank) if rank else 0.0,
-            "top":    label(ordered[0]) if ordered else "",
+            "top":    label(hits[0]) if hits else "",
         })
     return rows, aggregate(rows)
 
 
-def make_reorder(hf_id: str):
-    """A callable that reranks one question's hits, or None if unavailable."""
-    model = reranker_mod.load(hf_id)
-    if model is None:
-        return None
-
-    def reorder(query, hits):
-        if len(hits) < 2:
-            return hits
-        pairs  = [(query, h.text[:2000]) for h in hits]
-        scores = model.predict(pairs, show_progress_bar=False)
-        paired = sorted(zip(hits, scores), key=lambda z: -float(z[1]))
-        return [h for h, _ in paired]
-
-    return reorder
-
-
 def run_embedder(satellite, embedder: str, reranker_keys: list,
-                 pool: int, mode: str, build: bool) -> list:
+                 pool: int, mode: str, build: bool,
+                 router_mode: str = None) -> list:
     tag = embedder.split("/")[-1]
     print(f"\n{'=' * 70}")
     print(f"EMBEDDER: {tag}")
@@ -129,37 +114,25 @@ def run_embedder(satellite, embedder: str, reranker_keys: list,
               f"Run compare_models.py first, or drop --eval-only.")
         return []
 
-    print(f"  retrieving pool of {pool} once for {len(TEST_SET)} questions ...")
-    start = time.time()
-    cases = retrieve_pool(satellite, pool, mode)
-    retrieve_s = round(time.time() - start, 1)
-
-    ceiling = sum(1 for c, h in cases
-                  if c["accept"] and first_rank(h, c["accept"]) >= 1) / len(cases)
-    print(f"  done in {retrieve_s}s | recall ceiling in top-{pool} = "
-          f"{ceiling*100:.0f}%")
     print(f"\n  {'reranker':<16}{'H@1':>7}{'H@3':>7}{'H@5':>7}{'H@10':>7}"
-          f"{'MRR':>8}{'sec':>8}")
-    print("  " + "-" * 60)
+          f"{'recall':>8}{'MRR':>8}{'sec':>8}")
+    print("  " + "-" * 68)
 
     out = []
     for key in reranker_keys:
         hf_id = RERANKERS.get(key, key if "/" in str(key) else None)
-
-        if key == "none":
-            reorder = None
-        else:
+        if key != "none":
             if not hf_id:
                 print(f"  {key:<16}  unknown reranker, skipping")
                 continue
-            reorder = make_reorder(hf_id)
-            if reorder is None:
+            if reranker_mod.load(hf_id) is None:
                 print(f"  {key:<16}  could not load, skipping")
                 continue
 
+        configure(satellite, None if key == "none" else hf_id, router_mode)
         start = time.time()
         try:
-            rows, agg = score_ranked(cases, reorder)
+            rows, agg = score_ranked(retrieve_all(satellite, pool, mode))
         except Exception as exc:
             print(f"  {key:<16}  FAILED: {type(exc).__name__}: "
                   f"{str(exc)[:70]}")
@@ -167,13 +140,14 @@ def run_embedder(satellite, embedder: str, reranker_keys: list,
         secs = round(time.time() - start, 1)
 
         agg.update({"embedder": tag, "reranker": key, "mode": mode,
-                    "seconds": secs, "recall": ceiling,
+                    "router": satellite.retrieval.get("router", "rules"),
+                    "pool": pool, "seconds": secs,
                     "dim": embeddings.spec_for(embedder).dim})
         out.append(agg)
 
         print(f"  {key:<16}{agg['hit@1']*100:6.0f}%{agg['hit@3']*100:6.0f}%"
               f"{agg['hit@5']*100:6.0f}%{agg['hit@10']*100:6.0f}%"
-              f"{agg['mrr']:8.3f}{secs:8.1f}")
+              f"{agg['recall']*100:7.0f}%{agg['mrr']:8.3f}{secs:8.1f}")
 
         RESULTS.mkdir(exist_ok=True)
         # A key given as a raw HuggingFace id contains a slash, which
@@ -218,7 +192,7 @@ def summary(results: list) -> None:
     if not results:
         return
     RESULTS.mkdir(exist_ok=True)
-    cols = ["embedder", "dim", "reranker", "mode", "recall",
+    cols = ["embedder", "dim", "reranker", "mode", "router", "recall",
             "hit@1", "hit@3", "hit@5", "hit@10", "mrr", "seconds"]
     path = RESULTS / "reranker_comparison.csv"
     with path.open("w", newline="", encoding="utf-8") as fh:
@@ -261,6 +235,9 @@ def main():
     ap.add_argument("--pool", type=int, default=POOL)
     ap.add_argument("--eval-only", action="store_true",
                     help="use existing per-model stores, do not build")
+    ap.add_argument("--router", choices=["rules", "soft", "llm"],
+                    default=None,
+                    help="override the satellite's router setting")
     args = ap.parse_args()
 
     embedders = args.embedders or top_from_stage1(args.top)
@@ -274,12 +251,14 @@ def main():
     print(f"  embedders : {', '.join(embedders)}")
     print(f"  rerankers : {', '.join(args.rerankers)}")
     print(f"  mode      : {args.mode}   pool: {args.pool}")
+    print(f"  router    : {args.router or sat.retrieval['router']}")
 
     results = []
     for embedder in embedders:
         results.extend(run_embedder(sat, embedder, args.rerankers,
                                     args.pool, args.mode,
-                                    build=not args.eval_only))
+                                    build=not args.eval_only,
+                                    router_mode=args.router))
     summary(results)
 
 

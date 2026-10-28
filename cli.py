@@ -29,13 +29,14 @@ Searching:
 
     python cli.py query aditya-l1 "MRS diagram" --doc-types MOR GUIDELINES
     python cli.py query all "safe mode recovery"
+    python cli.py query aditya-l1 "how to switch on OBC" --router llm
     python cli.py shell aditya-l1
 """
 
 import argparse
 
 from core import (caption, embeddings, extract, generate, ingest, registry,
-                  rerank, retrieve)
+                  rerank, retrieve, router)
 
 
 def _table(rows, headers, widths):
@@ -210,13 +211,18 @@ def cmd_build(args):
 
 def run_query(sats, query, top_k, doc_types, subsystem, show_text,
               no_answer=False, model=generate.DEFAULT_MODEL):
+    plan = router.plan(query, sats[0].retrieval)
+    print(f"route: {plan.describe()}\n")
     if no_answer:
         hits = retrieve.search(sats, query, top_k=top_k,
-                               doc_types=doc_types, subsystem=subsystem)
+                               doc_types=doc_types, subsystem=subsystem,
+                               plan=plan)
+        router.log_plan(query, plan, hits)
     else:
         answer, hits = generate.ask(sats, query, top_k=top_k,
                                     doc_types=doc_types,
-                                    subsystem=subsystem, model=model)
+                                    subsystem=subsystem, model=model,
+                                    plan=plan)
         print(f"{answer}\n")
         print("Sources:")
     print(retrieve.format_hits(hits, show_satellite=len(sats) > 1,
@@ -224,11 +230,22 @@ def run_query(sats, query, top_k, doc_types, subsystem, show_text,
     return hits
 
 
+def use_router(sats, mode):
+    """Override the router for this run without touching satellite.yaml."""
+    if not mode:
+        return
+    for s in sats:
+        cfg = dict(s.config.get("retrieval") or {})
+        cfg["router"] = mode
+        s.config["retrieval"] = cfg
+
+
 def cmd_query(args):
     sats = registry.resolve(args.satellite)
     if not sats:
         print("  no satellites matched")
         return
+    use_router(sats, args.router)
     print()
     run_query(sats, args.query, args.k, args.doc_types,
               args.subsystem, args.show_text,
@@ -238,6 +255,7 @@ def cmd_query(args):
 
 def cmd_shell(args):
     sats = registry.resolve(args.satellite)
+    use_router(sats, args.router)
     print(f"\n  searching: {', '.join(s.slug for s in sats)}")
     print(f"  :sat <slug|all>   switch     :k <n>    result count")
     print(f"  :doc <TYPE ...>   filter     :text     toggle snippets")
@@ -258,6 +276,7 @@ def cmd_shell(args):
         if line.startswith(":sat "):
             try:
                 sats = registry.resolve(line.split(maxsplit=1)[1].split())
+                use_router(sats, args.router)
                 print(f"  -> {', '.join(s.slug for s in sats)}")
             except Exception as exc:
                 print(f"  {exc}")
@@ -347,12 +366,16 @@ def main():
                    help="show retrieved sources only, skip the model")
     p.add_argument("--model", default=generate.DEFAULT_MODEL,
                    help="Ollama text model used for the answer")
+    p.add_argument("--router", choices=router.ROUTERS, default=None,
+                   help="override the satellite's router for this run")
 
     p = sub.add_parser("shell", help="interactive search")
     p.add_argument("satellite", nargs="+")
     p.add_argument("-k", type=int, default=5)
     p.add_argument("--doc-types", nargs="*", default=None)
     p.add_argument("--show-text", action="store_true")
+    p.add_argument("--router", choices=router.ROUTERS, default=None,
+                   help="override the satellite's router for this run")
 
     args = ap.parse_args()
     if not args.command:
