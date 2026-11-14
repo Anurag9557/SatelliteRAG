@@ -476,6 +476,10 @@ def extract_doc(path: Path, doc_type: str, images_dir: Path,
 # Telecommand log
 
 TCH_ROW = re.compile(r'(?m)^[ \t]{0,4}(\d{3,6})[ \t]*\|')
+# Where a page ends: the rule under its last row, or failing that the
+# column header of the next page.
+TCH_PAGE_BREAK = re.compile(
+    r'(?m)^[ \t]*(?:[=\-]{40,}[ \t]*\r?$|SL\.NO[ \t]*\|)')
 
 
 def extract_tch(path: Path, doc_type: str) -> list:
@@ -496,7 +500,20 @@ def extract_tch(path: Path, doc_type: str) -> list:
     for i, m in enumerate(starts):
         end   = starts[i + 1].start() if i + 1 < len(starts) else len(raw)
         block = raw[m.start():end]
+        # The log is paginated every 30 rows: a footer, a form feed, a
+        # title and the column header again. Left in, all of that rides
+        # on the end of the row above it and the header's own cells
+        # (STATUS, SRCSTN, DSTSTN) get read as that row's values.
+        page_break = TCH_PAGE_BREAK.search(block)
+        if page_break:
+            block = block[:page_break.start()]
         parts = [p.strip() for p in block.split("|")]
+        # Every row closes with a pipe, which leaves an empty last cell.
+        # Counting columns from the end without dropping it puts each
+        # trailing field one place out: the destination station came out
+        # blank and the status column held the source station.
+        if parts and parts[-1] == "":
+            parts.pop()
         if len(parts) < 11:
             continue
 

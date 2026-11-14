@@ -1,0 +1,11 @@
+comparison,difference,low,high,excludes_zero
+minilm-l6: hybrid over dense,0.06,0.0139,0.1082,yes
+minilm-l6: bge-base over no reranker,-0.0294,-0.0932,0.0347,no
+minilm-l6: ms-marco-L-12 over no reranker,0.0276,-0.0205,0.075,no
+minilm-l6: ms-marco-L-4 over no reranker,0.0332,-0.0177,0.0839,no
+minilm-l6: ms-marco-L-6 over no reranker,0.032,-0.0151,0.0788,no
+minilm-l6: mxbai-xsmall over no reranker,-0.0627,-0.1328,0.0048,no
+best pair (bge-base-en + ms-marco-L-4) over minilm-l6 + ms-marco-L-6,0.0029,-0.0277,0.0363,no
+dense: bge-large-en over minilm-l6,0.0247,-0.0303,0.08,no
+dense: minilm-l6 over bge-m3,0.055,-0.0199,0.1324,no
+dense: bge-large-en over e5-base,0.1612,0.0818,0.2428,yes

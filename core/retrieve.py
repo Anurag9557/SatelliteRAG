@@ -235,7 +235,8 @@ def prepend(primary: list, extra: list, n: int = 2) -> list:
     return out
 
 
-def search_commands(satellite, query: str, plan, top_k: int) -> list:
+def search_commands(satellite, query: str, plan, top_k: int,
+                    mode: str = "hybrid") -> list:
     """
     Search the telecommand log.
 
@@ -272,9 +273,13 @@ def search_commands(satellite, query: str, plan, top_k: int) -> list:
                         satellite=satellite.slug, metadata=metas[i])
                     for i in order]
 
+    # The log follows the same mode as the documents. It used to run both
+    # passes whatever was asked for, so a "dense" evaluation still had
+    # BM25 answering its command questions.
     where = _where(date=plan.date)
-    dense = dense_search(query, col_c, satellite, cfg["n_dense"], where)
-    keyw  = bm25_search(
+    dense = [] if mode == "bm25" else dense_search(
+        query, col_c, satellite, cfg["n_dense"], where)
+    keyw  = [] if mode == "dense" else bm25_search(
         query, satellite.vectorstore_dir / "bm25_commands.pkl",
         satellite, cfg["n_bm25"], date=plan.date)
     return rrf([dense, keyw], cfg["rrf_k"])[:top_k]
@@ -300,7 +305,7 @@ def search_one(satellite, query: str, top_k=None, doc_types=None,
 
     commands = []
     if "commands" in plan.stores:
-        commands = search_commands(satellite, query, plan, top_k)
+        commands = search_commands(satellite, query, plan, top_k, mode)
         # Nothing in the log for a log question: the documents may still
         # answer it, so fall through rather than return nothing.
         if plan.stores == ["commands"] and commands:

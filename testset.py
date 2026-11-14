@@ -1,7 +1,7 @@
 """
 Labelled evaluation questions.
 
-100 questions with verified accept conditions, plus 2 negative cases that
+100 questions with accept conditions, plus 2 negative cases that
 have no correct answer and are kept out of the Hit@k statistics.
 
 A retrieved chunk counts as relevant if it satisfies ANY condition in
@@ -13,6 +13,13 @@ A retrieved chunk counts as relevant if it satisfies ANY condition in
 
 Procedure-number cases carry a text fallback as well, so they still hold
 if extraction changes and the numbering shifts.
+
+Two things to know when reading a score. One question, odhs_diag, cannot
+be hit on the current build: no caption in the store names the ODHS, so
+the ceiling is 99 and not 100. It stays in so the figures are not
+flattered. And eleven questions are satisfied by a large share of the
+store; they are listed in BROAD below and evaluate.py reports MRR with and
+without them.
 
 The questions are written against Aditya-L1. For another satellite,
 either replace this file or point the evaluator at a satellite-specific
@@ -99,7 +106,7 @@ TEST_SET = [
     {"id": "thermal", "q": "thermal requirements and special heater needs", "accept": [{"text_contains_any": ["thermal requirement", "special heater", "heater requirement"]}], "note": "thermal"},
     {"id": "power_budget", "q": "spacecraft power budget", "accept": [{"text_contains_any": ["power budget"]}], "note": "power budget"},
     {"id": "energy_bal", "q": "energy balance analysis", "accept": [{"text_contains_any": ["energy balance"]}], "note": "energy balance"},
-    {"id": "odhs_diag", "q": "ODHS block diagram", "accept": [{"content_type": "image_caption", "text_contains_any": ["odhs", "data handling"]}], "note": "ODHS block diagram, caption"},
+    {"id": "odhs_diag", "q": "ODHS block diagram", "accept": [{"content_type": "image_caption", "text_contains_any": ["odhs", "data handling"]}], "note": "ODHS block diagram, caption; no caption names it, a known miss"},
     {"id": "prop_diag", "q": "propulsion system schematic diagram", "accept": [{"content_type": "image_caption", "text_contains_any": ["propulsion"]}], "note": "propulsion schematic, caption"},
     {"id": "suit_diag", "q": "functional diagram of the SUIT payload", "accept": [{"content_type": "image_caption", "text_contains_any": ["suit"]}], "note": "SUIT functional diagram, caption"},
     {"id": "cmds_obc", "q": "OBC commands uplinked on 2026-06-09", "accept": [{"content_type": "command_log", "subsystem": "OBC"}], "note": "commands store"},
@@ -163,8 +170,28 @@ TEST_SET = [
     {"id": "od_residue", "q": "Plot of orbit-determination residues against LISA Pathfinder", "accept": [{"content_type": "image_caption", "text_contains_any": ["residue"]}], "note": "caption"},
     {"id": "cmd_cid", "q": "Which command had CID OBCS2370?", "accept": [{"text_contains_any": ["obcs2370"]}], "note": "commands"},
     {"id": "cmd_mep", "q": "Was the MEP enable command uplinked?", "accept": [{"text_contains_any": ["mep_ena", "mep enable"]}], "note": "commands"},
-    {"id": "cmd_station", "q": "Commands uplinked from SCC to station N18", "accept": [{"text_contains_any": ["scc to n18"]}], "note": "commands"},
+    {"id": "cmd_station", "q": "Commands uplinked from SCC to station N18", "accept": [{"text_contains_any": ["scc to n18"]}],
+     "note": "commands; unmatchable until the log's station columns were read in the right order"},
 ]
+
+# Questions that a large share of the store satisfies, counted on the
+# current build. They are fair questions, but a hit on them says little:
+# the command log covers one day from one station, so every record answers
+# the three log questions, and the concept phrases recur through a whole
+# chapter. The count after each id is how many chunks or records match.
+BROAD = {
+    "cmds_date",       # 203 of 203 records
+    "cmd_station",     # 203 of 203
+    "cmds_obc",        # 201 of 203
+    "orbit",           # 62 chunks
+    "fdir",            # 56
+    "mrs_diagram",     # 51
+    "od_residue",      # 40
+    "mission_phases",  # 32
+    "wheel_unload",    # 31
+    "orbit_det",       # 26
+    "station_keep",    # 23
+}
 
 # Out of scope. The system should say it cannot answer these, so they are
 # reported separately and kept out of the Hit@k figures.

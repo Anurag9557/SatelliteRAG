@@ -102,7 +102,7 @@ def run_model(satellite, name: str, modes: list, pool: int,
             continue
         agg.update({
             "tag": tag, "model": name, "mode": mode,
-            "rerank": rerank, "build_s": build_s,
+            "rerank": rerank, "pool": pool, "build_s": build_s,
             "eval_s": round(time.time() - start, 1),
             "dim": embeddings.spec_for(name).dim,
         })
@@ -120,8 +120,9 @@ def run_model(satellite, name: str, modes: list, pool: int,
 
 def write_table(results: list) -> None:
     RESULTS.mkdir(exist_ok=True)
-    cols = ["tag", "model", "dim", "mode", "rerank", "hit@1", "hit@3",
-            "hit@5", "hit@10", "mrr", "build_s", "eval_s"]
+    cols = ["tag", "model", "dim", "mode", "rerank", "pool", "hit@1", "hit@3",
+            "hit@5", "hit@10", "recall", "mrr", "mrr_strict", "build_s",
+            "eval_s"]
     path = RESULTS / "model_comparison.csv"
     with path.open("w", newline="", encoding="utf-8") as fh:
         writer = csv.DictWriter(fh, fieldnames=cols, extrasaction="ignore")
@@ -155,7 +156,10 @@ def main():
     ap.add_argument("--mode", choices=["dense", "hybrid", "both"],
                     default="dense",
                     help="dense isolates the embedder and is the fair test")
-    ap.add_argument("--pool", type=int, default=10)
+    # 20, the same depth compare_rerankers.py scores at. With 10 here and
+    # 20 there, "recall" meant two different things in the two tables and
+    # the dense-to-hybrid gain in recall was partly the deeper pool.
+    ap.add_argument("--pool", type=int, default=20)
     ap.add_argument("--rerank", action="store_true",
                     help="also apply the cross-encoder")
     ap.add_argument("--eval-only", action="store_true",

@@ -1,21 +1,24 @@
 {
   "aggregate": {
     "n": 100,
-    "hit@1": 0.81,
-    "hit@3": 0.91,
-    "hit@5": 0.92,
-    "hit@10": 0.97,
-    "mrr": 0.863204365079365,
+    "n_strict": 89,
+    "mrr_strict": 0.8761953402402841,
+    "hit@1": 0.83,
+    "hit@3": 0.93,
+    "hit@5": 0.94,
+    "hit@10": 0.96,
+    "recall": 0.98,
+    "mrr": 0.8848138528138528,
     "misses": [
       "odhs_diag",
-      "xband_system",
-      "cmd_station"
+      "xband_system"
     ],
     "embedder": "minilm-l6",
     "reranker": "ms-marco-L-4",
     "mode": "hybrid",
-    "seconds": 6.8,
-    "recall": 0.97,
+    "router": "soft",
+    "pool": 20,
+    "seconds": 9.3,
     "dim": 384
   },
   "per_question": [
@@ -27,7 +30,7 @@
       "hit@5": 1,
       "hit@10": 1,
       "rr": 1.0,
-      "top": "FCP-5201 / p.1 / toc_index"
+      "top": "FCP / FCP-5201 / p.1 / toc_index"
     },
     {
       "id": "obc_reset",
@@ -37,7 +40,7 @@
       "hit@5": 1,
       "hit@10": 1,
       "rr": 0.5,
-      "top": "p.230 / section"
+      "top": "MOR / p.230 / section"
     },
     {
       "id": "obc_cpu",
@@ -131,12 +134,12 @@
     },
     {
       "id": "payload_gl",
-      "rank": 3,
+      "rank": 2,
       "hit@1": 0,
       "hit@3": 1,
       "hit@5": 1,
       "hit@10": 1,
-      "rr": 0.3333333333333333,
+      "rr": 0.5,
       "top": "GUIDELINES / section"
     },
     {
@@ -157,7 +160,7 @@
       "hit@5": 1,
       "hit@10": 1,
       "rr": 1.0,
-      "top": "p.240 / image_caption"
+      "top": "MOR / p.240 / image_caption"
     },
     {
       "id": "cmds_date",
@@ -167,7 +170,7 @@
       "hit@5": 1,
       "hit@10": 1,
       "rr": 1.0,
-      "top": "command_log"
+      "top": "TCH / command_log"
     },
     {
       "id": "obc_scrub",
@@ -307,7 +310,7 @@
       "hit@5": 1,
       "hit@10": 1,
       "rr": 1.0,
-      "top": "p.235 / image_caption"
+      "top": "MOR / p.236 / section"
     },
     {
       "id": "halo",
@@ -351,13 +354,13 @@
     },
     {
       "id": "power_budget",
-      "rank": 18,
+      "rank": 14,
       "hit@1": 0,
       "hit@3": 0,
       "hit@5": 0,
-      "hit@10": 1,
-      "rr": 0.05555555555555555,
-      "top": "MOR / p.122 / section"
+      "hit@10": 0,
+      "rr": 0.07142857142857142,
+      "top": "MOR / p.238 / section"
     },
     {
       "id": "energy_bal",
@@ -377,7 +380,7 @@
       "hit@5": 0,
       "hit@10": 0,
       "rr": 0.0,
-      "top": "MOR / p.138 / section"
+      "top": "MOR / p.136 / image_caption"
     },
     {
       "id": "prop_diag",
@@ -387,7 +390,7 @@
       "hit@5": 1,
       "hit@10": 1,
       "rr": 1.0,
-      "top": "MOR / p.136 / image_caption"
+      "top": "MOR / p.165 / image_caption"
     },
     {
       "id": "suit_diag",
@@ -397,7 +400,7 @@
       "hit@5": 1,
       "hit@10": 1,
       "rr": 1.0,
-      "top": "p.143 / image_caption"
+      "top": "MOR / p.143 / image_caption"
     },
     {
       "id": "cmds_obc",
@@ -407,17 +410,17 @@
       "hit@5": 1,
       "hit@10": 1,
       "rr": 1.0,
-      "top": "command_log"
+      "top": "TCH / command_log"
     },
     {
       "id": "cmds_dtg",
-      "rank": 1,
-      "hit@1": 1,
-      "hit@3": 1,
+      "rank": 5,
+      "hit@1": 0,
+      "hit@3": 0,
       "hit@5": 1,
       "hit@10": 1,
-      "rr": 1.0,
-      "top": "command_log"
+      "rr": 0.2,
+      "top": "TCH / command_log"
     },
     {
       "id": "obc_thermistor",
@@ -457,7 +460,7 @@
       "hit@5": 1,
       "hit@10": 1,
       "rr": 1.0,
-      "top": "FCP-5217 / p.1 / toc_index"
+      "top": "FCP / FCP-5217 / p.1 / toc_index"
     },
     {
       "id": "obt_commanding",
@@ -707,7 +710,7 @@
       "hit@5": 1,
       "hit@10": 1,
       "rr": 0.5,
-      "top": "section"
+      "top": "GUIDELINES / section"
     },
     {
       "id": "odhs_record",
@@ -741,13 +744,13 @@
     },
     {
       "id": "mission_overview",
-      "rank": 16,
+      "rank": 11,
       "hit@1": 0,
       "hit@3": 0,
       "hit@5": 0,
-      "hit@10": 1,
-      "rr": 0.0625,
-      "top": "MOR / p.131 / section"
+      "hit@10": 0,
+      "rr": 0.09090909090909091,
+      "top": "MOR / p.16 / section"
     },
     {
       "id": "mission_phases",
@@ -767,7 +770,7 @@
       "hit@5": 1,
       "hit@10": 1,
       "rr": 1.0,
-      "top": "p.113 / section"
+      "top": "MOR / p.113 / section"
     },
     {
       "id": "transfer_traj",
@@ -867,7 +870,7 @@
       "hit@5": 1,
       "hit@10": 1,
       "rr": 0.5,
-      "top": "section"
+      "top": "GUIDELINES / section"
     },
     {
       "id": "stellar_cal",
@@ -917,7 +920,7 @@
       "hit@5": 0,
       "hit@10": 1,
       "rr": 0.14285714285714285,
-      "top": "p.137 / section"
+      "top": "MOR / p.137 / section"
     },
     {
       "id": "apss_on",
@@ -951,13 +954,13 @@
     },
     {
       "id": "heater_chart",
-      "rank": 3,
-      "hit@1": 0,
+      "rank": 1,
+      "hit@1": 1,
       "hit@3": 1,
       "hit@5": 1,
       "hit@10": 1,
-      "rr": 0.3333333333333333,
-      "top": "MOR / p.237 / image_caption"
+      "rr": 1.0,
+      "top": "GUIDELINES / image_caption"
     },
     {
       "id": "thruster_cosines",
@@ -967,7 +970,7 @@
       "hit@5": 1,
       "hit@10": 1,
       "rr": 1.0,
-      "top": "image_caption"
+      "top": "GUIDELINES / image_caption"
     },
     {
       "id": "pressure_valves",
@@ -977,17 +980,17 @@
       "hit@5": 1,
       "hit@10": 1,
       "rr": 1.0,
-      "top": "image_caption"
+      "top": "GUIDELINES / image_caption"
     },
     {
       "id": "od_residue",
-      "rank": 4,
-      "hit@1": 0,
-      "hit@3": 0,
+      "rank": 1,
+      "hit@1": 1,
+      "hit@3": 1,
       "hit@5": 1,
       "hit@10": 1,
-      "rr": 0.25,
-      "top": "MOR / p.88 / section"
+      "rr": 1.0,
+      "top": "MOR / p.86 / image_caption"
     },
     {
       "id": "cmd_cid",
@@ -1001,23 +1004,23 @@
     },
     {
       "id": "cmd_mep",
-      "rank": 6,
+      "rank": 2,
       "hit@1": 0,
-      "hit@3": 0,
-      "hit@5": 0,
+      "hit@3": 1,
+      "hit@5": 1,
       "hit@10": 1,
-      "rr": 0.16666666666666666,
+      "rr": 0.5,
       "top": "TCH / command_log"
     },
     {
       "id": "cmd_station",
-      "rank": 0,
-      "hit@1": 0,
-      "hit@3": 0,
-      "hit@5": 0,
-      "hit@10": 0,
-      "rr": 0.0,
-      "top": "command_log"
+      "rank": 1,
+      "hit@1": 1,
+      "hit@3": 1,
+      "hit@5": 1,
+      "hit@10": 1,
+      "rr": 1.0,
+      "top": "TCH / command_log"
     }
   ]
 }

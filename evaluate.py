@@ -9,6 +9,7 @@ and reports Hit@1/3/5/10 and MRR.
     python evaluate.py --rerank off             measure without the reranker
     python evaluate.py --router soft            try another router
     python evaluate.py --compare                both, side by side
+    python evaluate.py --routers                rules against soft
     python evaluate.py --csv results/eval.csv
 
 --compare is the one that answers "is the reranker worth it on my data".
@@ -25,7 +26,7 @@ import time
 from pathlib import Path
 
 from core import registry, retrieve
-from testset import NEGATIVE_CASES, TEST_SET
+from testset import BROAD, NEGATIVE_CASES, TEST_SET
 
 RESULTS_DIR = Path("results")
 
@@ -94,8 +95,14 @@ def run(satellite, pool: int = 10, cases: list = None) -> list:
 
 def aggregate(rows: list) -> dict:
     n = len(rows) or 1
+    # The same MRR without the questions nearly any chunk satisfies
+    # (testset.BROAD). If the two disagree, the headline is leaning on
+    # the easy ones.
+    strict = [r for r in rows if r["id"] not in BROAD]
     return {
         "n":      len(rows),
+        "n_strict":   len(strict),
+        "mrr_strict": sum(r["rr"] for r in strict) / (len(strict) or 1),
         "hit@1":  sum(r["hit@1"]  for r in rows) / n,
         "hit@3":  sum(r["hit@3"]  for r in rows) / n,
         "hit@5":  sum(r["hit@5"]  for r in rows) / n,
@@ -124,6 +131,9 @@ def report(rows: list, agg: dict, title: str) -> None:
     print(f"  Hit@5      : {agg['hit@5']*100:5.1f}%")
     print(f"  Hit@10     : {agg['hit@10']*100:5.1f}%")
     print(f"  MRR        : {agg['mrr']:.3f}")
+    if agg["n_strict"] != agg["n"]:
+        print(f"  MRR strict : {agg['mrr_strict']:.3f}   "
+              f"(the {agg['n_strict']} questions outside testset.BROAD)")
     # Recall is the ceiling: a chunk that never enters the pool cannot be
     # ranked into first place, however good the reranker is. Reporting it
     # separates "retrieval did not find it" from "ranking put it low".
@@ -227,6 +237,43 @@ def widen(satellite, n: int) -> None:
     retrieve._clients.clear()
 
 
+def compare_routers(satellite, pool: int) -> None:
+    """
+    Rules and soft, each with and without the reranker, on the same store.
+
+    The model router is left out: it needs the text model running and is
+    scored for accuracy by evaluate_router.py. Writes
+    results/router_retrieval.csv, which is what the default router in
+    core/registry.py rests on.
+    """
+    table = []
+    print(f"\n  {'router':<8}{'rerank':<8}{'H@1':>6}{'H@3':>6}{'H@5':>6}"
+          f"{'H@10':>7}{'MRR':>8}{'strict':>8}")
+    print("  " + "-" * 56)
+    for mode in ("rules", "soft"):
+        set_router(satellite, mode)
+        for on in (False, True):
+            set_rerank(satellite, on)
+            agg = aggregate(run(satellite, pool=pool))
+            table.append({"router": mode, "rerank": "on" if on else "off",
+                          "pool": pool,
+                          **{k: round(agg[k], 4) for k in (
+                              "hit@1", "hit@3", "hit@5", "hit@10",
+                              "recall", "mrr", "mrr_strict")}})
+            print(f"  {mode:<8}{'on' if on else 'off':<8}"
+                  f"{agg['hit@1']*100:5.0f}%{agg['hit@3']*100:5.0f}%"
+                  f"{agg['hit@5']*100:5.0f}%{agg['hit@10']*100:6.0f}%"
+                  f"{agg['mrr']:8.3f}{agg['mrr_strict']:8.3f}")
+
+    RESULTS_DIR.mkdir(exist_ok=True)
+    path = RESULTS_DIR / "router_retrieval.csv"
+    with path.open("w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=list(table[0]))
+        writer.writeheader()
+        writer.writerows(table)
+    print(f"\n  table -> {path}\n")
+
+
 def main():
     ap = argparse.ArgumentParser(description="Retrieval evaluation")
     ap.add_argument("--satellite", default="aditya-l1")
@@ -239,6 +286,8 @@ def main():
     ap.add_argument("--router", choices=["rules", "soft", "llm"],
                     default=None,
                     help="override the satellite's router setting")
+    ap.add_argument("--routers", action="store_true",
+                    help="rules against soft, reranker off and on")
     ap.add_argument("--csv", default=None, help="write per-question rows here")
     ap.add_argument("--json", default=None, help="write the summary here")
     ap.add_argument("--negatives", action="store_true",
@@ -255,6 +304,9 @@ def main():
 
     if args.widen:
         widen(sat, args.widen)
+    if args.routers:
+        compare_routers(sat, args.pool)
+        return
     if args.router:
         set_router(sat, args.router)
 

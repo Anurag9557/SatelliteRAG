@@ -106,8 +106,10 @@ DEFAULT_RETRIEVAL = {
     "rerank_pool": 20,
     "rerank_model": "cross-encoder/ms-marco-MiniLM-L-6-v2",
     # How a question is routed before searching: rules, soft or llm.
-    # See core/router.py.
-    "router":       "rules",
+    # See core/router.py. Soft is the default because it scored highest
+    # on the 100-question bench (results/router_retrieval.csv): forcing
+    # procedure chunks to the front, as the rules router does, costs MRR.
+    "router":       "soft",
     "router_model": "qwen2.5:7b-instruct",
 }
 
@@ -235,6 +237,13 @@ class Satellite:
             if not filename:
                 continue
             path = self.documents_dir / filename
+            # A mapping to a file that is not in the folder must not hide
+            # one that is. satellite.yaml travels with the repo while the
+            # documents do not, so the same mapping meets different files
+            # on different machines; without this the detected document
+            # was dropped and its type left pointing at nothing.
+            if not path.exists() and doc_type in out:
+                continue
             out[doc_type] = {
                 "file":   filename,
                 "parser": entry.get("parser")

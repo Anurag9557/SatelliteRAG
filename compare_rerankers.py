@@ -192,8 +192,9 @@ def summary(results: list) -> None:
     if not results:
         return
     RESULTS.mkdir(exist_ok=True)
-    cols = ["embedder", "dim", "reranker", "mode", "router", "recall",
-            "hit@1", "hit@3", "hit@5", "hit@10", "mrr", "seconds"]
+    cols = ["embedder", "dim", "reranker", "mode", "router", "pool", "recall",
+            "hit@1", "hit@3", "hit@5", "hit@10", "mrr", "mrr_strict",
+            "seconds"]
     path = RESULTS / "reranker_comparison.csv"
     with path.open("w", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, fieldnames=cols, extrasaction="ignore")

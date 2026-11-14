@@ -54,4 +54,4 @@ retrieval:
   rerank_pool: 20
   rerank_model: cross-encoder/ms-marco-MiniLM-L-6-v2
   # How a question is routed: rules, soft or llm (see core/router.py).
-  router: rules
+  router: soft
