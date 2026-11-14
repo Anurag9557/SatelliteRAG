@@ -13,7 +13,7 @@ Every component was chosen by measurement on a 100-question labelled set;
 see `PROJECT_CONTEXT.md` for the numbers and `COMPARISON.md` for what
 changed against the earlier pipeline.
 
-    Hit@1  0.83     Hit@5  0.92     Recall  0.96     MRR  0.871
+    Hit@1  0.84     Hit@5  0.93     Hit@10  0.97     MRR  0.883
 
 ## Documentation
 
@@ -172,6 +172,32 @@ LibreOffice is needed only for legacy `.doc` files, and is found
 automatically once installed.
 
 
+## Which model server
+
+Every model call goes through `core/llm.py`. Ollama is the default and
+needs nothing set. A local vLLM server (Linux or WSL2 only) is one
+environment variable away:
+
+    set SATRAG_LLM=vllm                          (PowerShell: $env:SATRAG_LLM="vllm")
+    set SATRAG_VLLM_URL=http://localhost:8000/v1
+
+Temperature 0, a fixed seed and a repetition penalty of 1.0 are sent
+explicitly to either server, so an answer is reproducible and does not
+depend on a server default. Answers are capped at 768 tokens.
+
+Batch jobs (`caption`, `lora/build_dataset.py`) can keep several requests
+in flight:
+
+    set SATRAG_LLM_CONCURRENCY=4
+
+This only helps if the server overlaps requests: start Ollama with
+`OLLAMA_NUM_PARALLEL=4`, or use vLLM. Measured on the RTX 3050 with a
+1.5B model, that made a 102-request batch 2.8x faster than Ollama's
+default. Each parallel slot reserves its own context, so with the 7B text
+model or the vision model on a 6 GB card it may not fit; the default stays
+at 1 for that reason. `bench/README.md` has the measurements.
+
+
 ## Querying
 
 Three ways to ask a question, depending on how many you have.
@@ -211,6 +237,12 @@ goes to the telecommand store and comes back as records; everything else
 goes to the knowledge store. Asking for a diagram lifts figure captions;
 asking "how do I" pushes index rows below the procedures, while asking
 "which FCP" leaves them where they are.
+
+Three routers are available through `retrieval.router`. `soft`, the
+default, searches the procedure document for every question and fuses it
+in; `rules` decides from the wording whether a procedure is wanted and
+puts procedure chunks first; `llm` asks the local text model. Soft scored
+highest on the benchmark (`results/router_retrieval.csv`).
 
 ### Interactive: several questions in a row
 
@@ -280,7 +312,7 @@ results in FCP when that is where the answer is.
 
 ## Embedding models
 
-    minilm-l6       384   fastest, best hybrid MRR in the confidential-corpus 100-question benchmark
+    minilm-l6       384   fastest; level with the best pair in the confidential-corpus 100-question benchmark
     bge-m3         1024   multilingual, long context, heavy
     bge-large-en   1024   strong English-only
     mxbai-large    1024   strong English-only

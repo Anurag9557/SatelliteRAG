@@ -6,6 +6,14 @@ say. Measured on the same 100-question labelled set in both cases.
 Previous system: `ISRO_THESIS\Isro_data` (step1-step4 + evaluate + app)
 Current system:  `SatelliteRAG` (core/ + cli.py + evaluate.py)
 
+**Note, 12 November 2026.** The current-system figures in this file are
+the August measurements and have been superseded. They were taken while
+the procedure prepend was silently not running, and the reranker rows
+used a shortcut the pipeline does not take. `PROJECT_CONTEXT.md` section 6
+has the re-measured figures (Hit@1 84%, Hit@5 93%, MRR 0.883 with the
+default settings) and what was wrong. The previous-system figures, the
+structure comparison and the lists of bugs below are unaffected.
+
 
 ## 1. The headline numbers
 

@@ -138,8 +138,8 @@ crashing.
 ## 5. Design decisions worth knowing
 
 **Hybrid retrieval: BM25 alongside the dense pass, fused by RRF.** This
-is the single largest contributor to retrieval quality here, worth 3.7
-times the reranker (section 6).
+is the single largest contributor to retrieval quality here, +0.06 MRR,
+and the one gain the test set is large enough to confirm (section 6).
 
 The reason is the corpus. These documents are dense with identifiers that
 carry no semantic content and cannot be paraphrased: procedure numbers
@@ -201,112 +201,220 @@ Aditya-L1 file holds 6 procedure bodies and 225 index rows, so an index
 row is the only chunk that can answer most procedure questions.
 Restricting the prepend to bodies cost about 30 points of Hit@1.
 
+**Procedures are fused, not forced.** Under the default soft router the
+procedure document is searched for every question and joins the fusion as
+a third list. The rules router instead classifies the question and puts
+two procedure chunks first; measured, that costs about 0.03 MRR, because
+one question in five is classified wrongly (section 6, Routers).
+
 **Cross-satellite search fuses by rank, not score**, so satellites using
 different embedding models still merge correctly.
 
 
 ## 6. Measured results
 
-100 labelled questions, `results/all_results.csv`. Accept conditions were
-tightened after an early run: several were loose enough to admit false
-positives, so figures measured before that are not comparable.
+100 labelled questions, `results/all_results.csv`, measured on 12 November
+2026 with the pipeline as it ships: soft router, the top 20 results scored
+in both stages. The August figures are kept in `results/archive-2026-08/`
+and are not comparable with these; the last part of this section says why.
+
+`MRR strict` in the result files is the same measure without the eleven
+questions that a large share of the store satisfies (`testset.BROAD`). It
+moves with the headline, 0.01 to 0.02 lower, so the ranking does not lean on
+the easy questions. One question, `odhs_diag`, cannot be hit on this build,
+so the ceiling is 99%.
 
 ### Embedders alone, dense mode
 
 Dense isolates the embedding model. Hybrid mixes in BM25, which does not
 depend on the embedder and flattens the differences.
 
-| Model | Dim | Hit@1 | Hit@5 | Recall | MRR | Build |
+| Model | Dim | Hit@1 | Hit@5 | Hit@10 | Found in 20 | MRR |
 |---|---|---|---|---|---|---|
-| bge-small-en | 384 | 72% | 88% | 90% | **0.787** | 25s |
-| bge-base-en | 768 | 72% | 86% | 90% | 0.786 | 41s |
-| mpnet-base | 768 | 71% | 87% | 93% | 0.784 | 50s |
-| bge-large-en | 1024 | 74% | 85% | 88% | 0.783 | 109s |
-| minilm-l6 | 384 | 69% | 86% | **94%** | 0.774 | 12s |
-| mxbai-large | 1024 | 71% | 82% | 87% | 0.758 | 96s |
-| e5-large | 1024 | 68% | 84% | 87% | 0.750 | 93s |
-| gte-base | 768 | 64% | 86% | 90% | 0.733 | 38s |
-| bge-m3 | 1024 | 65% | 82% | 86% | 0.721 | 34s |
-| e5-base | 768 | 55% | 74% | 80% | 0.635 | 50s |
+| bge-large-en | 1024 | 77% | 88% | 92% | 95% | **0.816** |
+| bge-small-en | 384 | 74% | 89% | 92% | 95% | 0.808 |
+| bge-base-en | 768 | 74% | 87% | 92% | 95% | 0.807 |
+| mpnet-base | 768 | 73% | 88% | 94% | 94% | 0.800 |
+| minilm-l6 | 384 | 71% | 87% | **96%** | **96%** | 0.792 |
+| mxbai-large | 1024 | 73% | 84% | 89% | 93% | 0.781 |
+| gte-base | 768 | 66% | 87% | 92% | 96% | 0.754 |
+| e5-large | 1024 | 68% | 83% | 87% | 92% | 0.752 |
+| bge-m3 | 1024 | 67% | 82% | 87% | 91% | 0.737 |
+| e5-base | 768 | 57% | 76% | 82% | 83% | 0.655 |
 
-Size predicts nothing. The 133 MB model matches the 1.34 GB one. BGE-M3,
-the previous default at 2.3 GB, ranks ninth of ten.
+Size predicts nothing. The 133 MB bge-small-en sits within 0.01 of the
+1.3 GB bge-large-en, and BGE-M3, the previous default at 2.3 GB, ranks
+ninth of ten. The order inside the top five is not established, though:
+see the intervals below.
 
 ### What BM25 and RRF contribute
 
-Comparing each embedder in dense mode against the same embedder in hybrid
-mode, with no reranker in either. The only difference is the BM25 pass
-and the fusion.
+Each embedder in dense mode against the same embedder in hybrid mode, no
+reranker in either, both scored on the top 20.
 
-| Embedder | MRR dense | MRR hybrid | Δ | Recall dense | Recall hybrid | Δ |
-|---|---|---|---|---|---|---|
-| minilm-l6 | 0.774 | 0.844 | **+0.070** | 94% | 97% | +3 |
-| mpnet-base | 0.784 | 0.841 | +0.057 | 93% | 96% | +3 |
-| bge-small-en | 0.787 | 0.833 | +0.046 | 90% | 96% | +6 |
-| bge-base-en | 0.786 | 0.829 | +0.043 | 90% | 98% | **+8** |
-| bge-large-en | 0.783 | 0.810 | +0.027 | 88% | 98% | **+10** |
+| Embedder | MRR dense | MRR hybrid | Change | Hit@10 dense | Hit@10 hybrid |
+|---|---|---|---|---|---|
+| minilm-l6 | 0.792 | 0.852 | **+0.060** | 96% | 97% |
+| mpnet-base | 0.800 | 0.854 | +0.054 | 94% | 96% |
+| bge-small-en | 0.808 | 0.820 | +0.012 | 92% | 95% |
+| bge-base-en | 0.807 | 0.810 | +0.003 | 92% | 94% |
+| bge-large-en | 0.816 | 0.817 | +0.001 | 92% | 96% |
 
-Stacked for the recommended embedder:
+Stacked for the embedder that ships:
 
-    dense only                0.774
-    + BM25 + RRF              0.844    +0.070
-    + cross-encoder rerank    0.863    +0.019
+    dense only                0.792
+    + BM25 + RRF              0.852    +0.060    interval +0.014 to +0.108
+    + cross-encoder (L-6)     0.884    +0.032    interval -0.015 to +0.079
 
-**The keyword pass is worth 3.7 times the reranker**, and it is the only
-stage that raises recall — the reranker moves Hit@10 by 0.000, because
-reordering cannot find what retrieval missed. On bge-large-en, BM25 adds
-ten points of recall: a tenth of the questions are answered by a chunk
-the dense pass never returned at all.
+The keyword pass is the one gain this test set can confirm. The reranker
+adds about half as much and its interval reaches zero, so on a hundred
+questions it is a likely improvement and not a shown one. It does what it
+is for, though: Hit@1 goes from 77% to 84%.
 
-Note the inversion. The embedders that look best in dense mode gain least
-from fusion, and the one that looks worst gains most. Ranking embedders
-in dense mode alone would have picked bge-small-en; measured in the
-configuration that actually ships, minilm-l6 comes out ahead.
+Fusion helps the two small general-purpose embedders and does almost
+nothing for the three BGE models. That is why minilm-l6, fifth in dense
+mode, ends level with the best once BM25 is in.
+
+On recall, BM25 adds one to four points of Hit@10. An earlier version of
+this section credited it with three to ten, which came from scoring dense
+on the top 10 and hybrid on the top 20.
 
 ### Embedder x reranker, hybrid mode
 
-Best of 30 combinations:
+Best of 30 combinations, each run through the whole pipeline with the
+reranker in its real place:
 
 | Embedder | Reranker | Hit@1 | Hit@5 | MRR | sec |
 |---|---|---|---|---|---|
-| bge-base-en | ms-marco-L-6 | 82% | 92% | 0.867 | 9.6 |
-| bge-base-en | ms-marco-L-12 | 81% | 92% | 0.866 | 18.7 |
-| minilm-l6 | ms-marco-L-6 | 82% | 91% | 0.864 | 9.5 |
-| minilm-l6 | ms-marco-L-4 | 81% | 92% | 0.863 | 6.7 |
-| bge-base-en | ms-marco-L-4 | 81% | 93% | 0.863 | 6.8 |
-| minilm-l6 | none | 77% | **94%** | 0.844 | 0.0 |
+| bge-base-en | ms-marco-L-4 | 84% | 94% | 0.887 | 9.8 |
+| bge-base-en | ms-marco-L-12 | 84% | 93% | 0.886 | 19.9 |
+| mpnet-base | ms-marco-L-4 | 83% | **95%** | 0.886 | 10.2 |
+| minilm-l6 | ms-marco-L-4 | 83% | 94% | 0.885 | 9.3 |
+| minilm-l6 | ms-marco-L-6 | 84% | 93% | 0.884 | 11.7 |
+| minilm-l6 | none | 77% | **95%** | 0.852 | 3.6 |
 
-### The noise floor
+The fifteen combinations of an embedder with an ms-marco reranker span
+0.860 to 0.887. The best of them against the pair that ships is +0.003
+with an interval of -0.028 to +0.036: a tie.
 
-`minilm-l6 + none` was measured twice and returned 0.839 and 0.844.
-ChromaDB's index is approximate and fp16 rounds, so **differences under
-about 0.005 MRR are not real**. That makes the top ten combinations
-statistically tied.
+### How sure the differences are
+
+Retrieval is deterministic. The same configuration run four times, in two
+separate processes, returned the same rank for every question, so there is
+no run-to-run noise to report. An earlier version of this file gave a
+"noise floor" of 0.005 MRR from two runs that disagreed; that gap was
+never reproduced and was not random.
+
+What is uncertain is the sample: a hundred questions. `collect_results.py`
+resamples the questions (paired bootstrap, 10,000 draws) and writes
+`results/intervals.csv`:
+
+| Difference in MRR | Estimate | 95% interval | Shown? |
+|---|---|---|---|
+| minilm-l6: hybrid over dense | +0.060 | +0.014 to +0.108 | yes |
+| minilm-l6: ms-marco-L-6 over no reranker | +0.032 | -0.015 to +0.079 | no |
+| minilm-l6: ms-marco-L-4 over no reranker | +0.033 | -0.018 to +0.084 | no |
+| best pair over minilm-l6 + ms-marco-L-6 | +0.003 | -0.028 to +0.036 | no |
+| dense: bge-large-en over minilm-l6 | +0.025 | -0.030 to +0.080 | no |
+| dense: minilm-l6 over bge-m3 | +0.055 | -0.020 to +0.132 | no |
+| dense: bge-large-en over e5-base | +0.161 | +0.082 to +0.243 | yes |
+
+So the test set can separate a good embedder from a poor one and hybrid
+from dense. It cannot rank the good embedders against each other, or the
+ms-marco rerankers. Settling those needs more questions, not more runs.
+
+### Routers
+
+Retrieval under each router, working store, top 10 scored
+(`results/router_retrieval.csv`):
+
+| Router | Reranker | Hit@1 | Hit@5 | Hit@10 | MRR |
+|---|---|---|---|---|---|
+| rules | off | 74% | 94% | 96% | 0.823 |
+| rules | on | 79% | 94% | 97% | 0.850 |
+| soft | off | 77% | 95% | 97% | 0.851 |
+| soft | on | **84%** | 93% | 97% | **0.883** |
+
+The rules router decides whether a question wants a procedure and, if so,
+puts the two closest procedure chunks first. It gets that decision right
+80% of the time on the benchmark questions, and when it is wrong the
+forced chunks push the answer down. The soft router searches the procedure
+document for every question and lets fusion place the result. Soft over
+rules, reranker on, is +0.033 with an interval of +0.001 to +0.068, and
+soft is the default.
+
+Routing accuracy (`results/router_accuracy.csv`):
+
+| Set | Router | Intent | Store | Per question |
+|---|---|---|---|---|
+| 100 benchmark questions | rules | 80% | 100% | under 1 ms |
+| 100 benchmark questions | llm (qwen2.5:7b-instruct) | 93% | 99% | 1.3 s |
+| 40 routing questions | rules | 52.5% | 90% | under 1 ms |
+| 40 routing questions | llm (qwen2.5:7b-instruct) | 92.5% | 97.5% | 0.7 s |
+
+The 40 routing questions were written after the rules, around their weak
+spots, so they are a regression check and overstate how often the rules
+fail in ordinary use. The model router is far more accurate and costs a
+second per question; the soft router gets most of the retrieval benefit
+for nothing, by not needing the procedure decision at all.
 
 ### Negative results
 
-**Larger rerankers were consistently worse.** On every embedder tested:
+**The larger rerankers were no better.** On minilm-l6:
 
-| Reranker | Size | MRR (minilm-l6) | Time |
-|---|---|---|---|
-| ms-marco-L-4 | 77 MB | **0.863** | 7s |
-| ms-marco-L-6 | 90 MB | 0.864 | 10s |
-| ms-marco-L-12 | 133 MB | 0.860 | 19s |
-| bge-reranker-base | 1.1 GB | 0.775 | 42s |
-| bge-reranker-v2-m3 | 2.3 GB | 0.846 | 113s |
-| mxbai-rerank-xsmall | 142 MB | 0.776 | 19s |
+| Reranker | Size | Hit@1 | MRR | Time |
+|---|---|---|---|---|
+| none | | 77% | 0.852 | |
+| ms-marco-L-4 | 77 MB | 83% | **0.885** | 9s |
+| ms-marco-L-6 | 91 MB | 84% | 0.884 | 12s |
+| ms-marco-L-12 | 134 MB | 83% | 0.879 | 20s |
+| bge-reranker-base | 1.1 GB | 73% | 0.822 | 44s |
+| mxbai-rerank-xsmall | 153 MB | 70% | 0.789 | 21s |
 
-`bge-reranker-base` scores below no reranker at all (0.844), on all five
-embedders. Both BGE reranker generations lose to ms-marco here.
+`bge-reranker-base` and `mxbai-rerank-xsmall` score below no reranker at
+all on minilm-l6 and mpnet-base, and never reach the ms-marco family on
+any embedder. Within the ms-marco family depth buys nothing: L-4 matches
+L-12 at half the time.
 
-**The reranker's value shrank as retrieval improved.** An intermediate
-version of this pipeline showed +0.39 MRR from reranking, which was the
-symptom that led to finding a real bug in the fusion stage. With that
-fixed the gain is +0.019, and reranking costs Hit@5: 94% to 91%.
+**The reranker costs a little at Hit@5.** 95% without it, 93% with it on
+minilm-l6. The pipeline hands the top 5 to the language model, so with the
+reranker on the first citation is right more often and the context is
+complete slightly less often.
 
-Because the pipeline sends the top 5 to the language model and the model
-reads all five, Hit@5 is the operationally relevant number, and the
-reranker is slightly negative there.
+### Why the August figures were retired
+
+The figures this section used to carry (dense 0.774, hybrid 0.844,
+reranked 0.863, "the keyword pass is worth 3.7 times the reranker") were
+measured in August and do not describe the pipeline now. Five things were
+wrong with them:
+
+- **The procedure prepend was not running.** Retrieval filtered that
+  second search on a metadata field called `source_doc`; ingestion has
+  always written `doc_type`. The filter matched nothing, so the step did
+  nothing, and every August number was measured without it. Switching the
+  step off today reproduces the August file rank for rank. The field name
+  was corrected with the routing work on 28 October, the step began to
+  run, and under the rules router it cost about 0.03 MRR.
+- **The reranker table used a shortcut.** It retrieved a pool once and
+  reranked that saved list last. The pipeline reranks first and then
+  applies the figure and procedure rules, which is a different order.
+  `compare_rerankers.py` was changed in September to run the real pipeline
+  but the table was never run again.
+- **The Hit@10 column was wrong in all thirty reranker rows.** It held
+  "found anywhere in the top 20". True Hit@10 was one to six points lower.
+- **Dense was scored on the top 10 and hybrid on the top 20**, so the
+  recall the keyword pass appeared to add was partly the deeper pool.
+- **The command log was misread.** Every row ends with a pipe, and the
+  columns were counted from the end without allowing for it, so each
+  trailing field was one place out: the destination station came out
+  blank and the status column held the source station. The page header
+  that repeats every 30 rows was also read into the row above it, which
+  corrupted six records. All 203 are now clean, and the one test question
+  about the uplink station, which could never match, now does.
+
+None of this changes what the August work found in outline: hybrid beats
+dense, the small rerankers beat the large ones, and the embedders near the
+top cannot be told apart. The sizes of the gains changed.
 
 
 ## 7. Recommended configuration
@@ -315,12 +423,13 @@ reranker is slightly negative there.
       model: minilm-l6
 
     retrieval:
-      rerank: false          # Hit@5 94%, no second model
-      # rerank: true         # Hit@1 81%, MRR 0.863, +7s per 100 queries
-      # rerank_model: cross-encoder/ms-marco-MiniLM-L-4-v2
+      router: soft
+      rerank: true           # Hit@1 84%, Hit@5 93%, MRR 0.883
+      rerank_model: cross-encoder/ms-marco-MiniLM-L-6-v2
+      # rerank: false        # Hit@1 77%, Hit@5 95%, MRR 0.851, no second model
 
-167 MB of models with reranking, 90 MB without. Everything within 0.005
-MRR of the best measured combination, at a fraction of the size.
+183 MB of models with reranking, 92 MB without. On this test set it is
+level with every heavier combination measured.
 
 
 ## 8. Data, Aditya-L1
@@ -380,15 +489,31 @@ file and save it as `.docx`.
     python compare_models.py --models ...   embedder comparison
     python compare_rerankers.py --top 3     reranker comparison
     python collect_results.py               merge all results
+    python evaluate.py --routers            rules router against soft
+
+    python parallel_demo.py <slug>          questions one at a time, then all at once
+    python demo/server.py <slug>            Ollama and vLLM side by side, see demo/README.md
 
 
 ## 11. Open items
 
-- **Four questions miss at 5** in every configuration: `power_budget`,
-  `odhs_diag`, `xband_system`, `cmd_station`. They sit outside the
-  candidate pool, so no reranker can reach them. Try
-  `evaluate.py --compare --widen 50` to see whether pool size is the
-  ceiling; if recall rises, that is worth more than any model swap.
+- **Three questions are not found in the top 10** with the default
+  settings: `power_budget`, `odhs_diag`, `xband_system`. `odhs_diag`
+  cannot be hit at all, because no caption in the store names the ODHS.
+  For the other two, try `evaluate.py --compare --widen 50` to see
+  whether pool size is the ceiling. `cmd_station` was a fourth until the
+  command log's columns were read in the right order.
+- **The usual demo question ranks its procedure sixth.** "What is the
+  procedure for switching on OBC?" returns FCP-5201 at rank 6 with the
+  default settings and rank 4 with the reranker off, behind the other
+  OBC procedures. The top 5 go to the language model, so the body it
+  needs is just outside the context. Worth looking at before a demo; it
+  is one question and should not be tuned for on its own.
+- **A hundred questions is too few** to rank the leading embedders or the
+  ms-marco rerankers against each other (section 6, intervals). Eleven of
+  the hundred are also satisfied by a large share of the store
+  (`testset.BROAD`). More and tighter questions would settle more than
+  another model sweep.
 - **Chunk size has never been swept.** The per-type budgets were chosen
   by reasoning, not measured. Extraction and chunking are separate
   stages, so a sweep only needs re-ingesting.
@@ -396,8 +521,10 @@ file and save it as `.docx`.
   with citations, a command table with CSV download, inline figures and
   audit logging. `generate.ask()` already returns what it needs; the work
   is a satellite dropdown and swapping the import.
-- **LLM router with Pydantic** — replace the regex `route()` with a
-  validated `QueryPlan`. Not started.
+- **LLM router: built, retrieval effect not measured.** `router: llm`
+  classifies 93% of the benchmark questions correctly against 80% for the
+  rules (section 6). What that does to Hit@k has not been run:
+  `evaluate.py --router llm --compare`, with the text model up.
 - **Multimodal retrieval** — captions only at present. Page-image
   retrieval was on the old roadmap and remains unexplored.
 - **Verify the GitHub repository is private.** Flagged as urgent in the
