@@ -1,0 +1,352 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SatelliteRAG: Ollama and vLLM, side by side</title>
+<style>
+  :root {
+    --ink: #1c1b22; --soft: #5d5b6b; --faint: #8d8b99; --line: #e3e1ec;
+    --page: #f6f5fa; --card: #ffffff;
+    --ollama: #b26a00; --ollama-bg: #fff4e2;
+    --vllm: #5b3fc4; --vllm-bg: #efeaff;
+    --good: #1f7a4d; --bad: #b3261e;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--page); color: var(--ink);
+         font: 15px/1.5 "Segoe UI", system-ui, -apple-system, sans-serif; }
+  header { background: var(--card); border-bottom: 1px solid var(--line);
+           padding: 14px 28px; display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+  header h1 { font-size: 18px; margin: 0; font-weight: 650; }
+  header .sub { color: var(--soft); font-size: 13px; }
+  .pill { display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--line);
+          border-radius: 999px; padding: 4px 12px; font-size: 12.5px; background: var(--card); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
+  .dot.up { background: var(--good); } .dot.down { background: var(--bad); }
+  .grow { flex: 1; }
+  nav { display: flex; gap: 4px; padding: 14px 28px 0; }
+  nav button { border: 0; background: none; padding: 9px 16px; font: inherit; color: var(--soft);
+               border-bottom: 2px solid transparent; cursor: pointer; }
+  nav button.on { color: var(--ink); border-color: var(--vllm); font-weight: 600; }
+  main { padding: 18px 28px 40px; max-width: 1280px; }
+  section { display: none; } section.on { display: block; }
+  .ask { display: flex; gap: 10px; }
+  .ask input { flex: 1; padding: 11px 14px; font: inherit; border: 1px solid var(--line);
+               border-radius: 8px; background: var(--card); }
+  button.go { background: var(--vllm); color: #fff; border: 0; border-radius: 8px;
+              padding: 0 20px; font: inherit; font-weight: 600; cursor: pointer; min-height: 42px; }
+  button.go:disabled { opacity: .5; cursor: default; }
+  .row { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; margin-top: 10px;
+         color: var(--soft); font-size: 13px; }
+  .chip { border: 1px solid var(--line); background: var(--card); border-radius: 999px;
+          padding: 4px 11px; font-size: 12.5px; cursor: pointer; color: var(--soft); }
+  .chip:hover { border-color: var(--vllm); color: var(--ink); }
+  select { font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px;
+           background: var(--card); }
+  .strip { margin-top: 14px; background: var(--card); border: 1px solid var(--line);
+           border-radius: 8px; padding: 10px 14px; font-size: 13px; color: var(--soft); }
+  .strip b { color: var(--ink); font-weight: 600; }
+  .strip ol { margin: 6px 0 0 18px; padding: 0; font-family: Consolas, monospace; font-size: 12px; }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 14px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .card .head { display: flex; align-items: baseline; gap: 10px; padding: 11px 16px;
+                border-bottom: 1px solid var(--line); }
+  .card.ollama .head { background: var(--ollama-bg); } .card.vllm .head { background: var(--vllm-bg); }
+  .card .name { font-weight: 700; font-size: 16px; }
+  .card.ollama .name { color: var(--ollama); } .card.vllm .name { color: var(--vllm); }
+  .card .model { color: var(--soft); font-size: 12px; font-family: Consolas, monospace; }
+  .nums { display: grid; grid-template-columns: repeat(4, 1fr); border-bottom: 1px solid var(--line); }
+  .nums > div { padding: 10px 16px; border-right: 1px solid var(--line); }
+  .nums > div:last-child { border-right: 0; }
+  .nums .v { font-size: 22px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .nums .k { font-size: 11.5px; color: var(--faint); text-transform: uppercase; letter-spacing: .04em; }
+  .answer { padding: 14px 16px; white-space: pre-wrap; min-height: 180px; font-size: 14px; }
+  .answer.empty { color: var(--faint); }
+  .note { font-size: 12px; color: var(--faint); padding: 0 16px 12px; }
+  .verdict { margin-top: 14px; padding: 13px 16px; border-radius: 8px; background: #e9f5ee;
+             border-left: 4px solid var(--good); font-size: 15px; display: none; }
+  .verdict b { font-weight: 650; }
+  .cells { display: grid; grid-template-columns: repeat(8, 1fr); gap: 6px; padding: 14px 16px; }
+  .cell { border-radius: 6px; background: var(--page); border: 1px solid var(--line); height: 38px;
+          display: flex; align-items: center; justify-content: center; font-size: 12px;
+          color: var(--faint); font-variant-numeric: tabular-nums; }
+  .card.ollama .cell.done { background: var(--ollama-bg); border-color: var(--ollama); color: var(--ollama); }
+  .card.vllm .cell.done { background: var(--vllm-bg); border-color: var(--vllm); color: var(--vllm); }
+  .cell.fail { background: #fdecea; border-color: var(--bad); color: var(--bad); }
+  .bars { margin-top: 16px; background: var(--card); border: 1px solid var(--line);
+          border-radius: 10px; padding: 16px; display: none; }
+  .bar { display: grid; grid-template-columns: 90px 1fr 150px; gap: 12px; align-items: center; margin: 8px 0; }
+  .bar .track { background: var(--page); border-radius: 6px; height: 26px; overflow: hidden; }
+  .bar .fill { height: 100%; width: 0; border-radius: 6px; transition: width .6s; }
+  .bar.ollama .fill { background: var(--ollama); } .bar.vllm .fill { background: var(--vllm); }
+  .bar .n { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--soft); }
+  table { border-collapse: collapse; width: 100%; background: var(--card); border: 1px solid var(--line);
+          border-radius: 10px; overflow: hidden; margin-top: 10px; }
+  th, td { text-align: left; padding: 9px 14px; border-bottom: 1px solid var(--line); font-size: 14px; }
+  th { background: var(--page); font-size: 12px; color: var(--soft); text-transform: uppercase; letter-spacing: .04em; }
+  td.num { font-variant-numeric: tabular-nums; }
+  h2 { font-size: 15px; margin: 22px 0 4px; } p.lede { color: var(--soft); margin: 4px 0 0; max-width: 820px; }
+  @media (max-width: 860px) { .cols { grid-template-columns: 1fr; } .cells { grid-template-columns: repeat(4, 1fr); } }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Ollama and vLLM, side by side</h1>
+    <div class="sub" id="where">SatelliteRAG</div>
+  </div>
+  <span class="grow"></span>
+  <span class="pill"><span class="dot" id="dot-ollama"></span><span id="pill-ollama">Ollama</span></span>
+  <span class="pill"><span class="dot" id="dot-vllm"></span><span id="pill-vllm">vLLM</span></span>
+</header>
+
+<nav>
+  <button data-tab="one" class="on">One question</button>
+  <button data-tab="batch">A batch</button>
+  <button data-tab="measured">Measured</button>
+</nav>
+
+<main>
+<section id="one" class="on">
+  <div class="ask">
+    <input id="q" placeholder="Ask a question about the mission documents" autocomplete="off">
+    <button class="go" id="ask">Ask both</button>
+  </div>
+  <div class="row">
+    <label><input type="radio" name="mode" value="together" checked> both at once</label>
+    <label><input type="radio" name="mode" value="turns"> one after the other</label>
+    <span class="grow"></span>
+    <span id="chips"></span>
+  </div>
+  <div class="strip" id="strip-one">The question is routed and searched once on this laptop. Both servers then get the same passages and the same prompt.</div>
+  <div class="cols">
+    <div class="card ollama" id="one-ollama"></div>
+    <div class="card vllm" id="one-vllm"></div>
+  </div>
+  <div class="verdict" id="verdict-one"></div>
+</section>
+
+<section id="batch">
+  <p class="lede">The same questions sent to each server with several in flight, which is the shape of captioning and of building a training set. One server runs, then the other, so they do not compete with each other for the card.</p>
+  <div class="row">
+    <label>questions <select id="b-n"><option>4</option><option selected>8</option><option>16</option></select></label>
+    <label>in flight <select id="b-flight"><option>1</option><option>4</option><option selected>8</option><option>16</option></select></label>
+    <label>first <select id="b-first"><option value="ollama">Ollama</option><option value="vllm">vLLM</option></select></label>
+    <button class="go" id="run">Run the batch</button>
+  </div>
+  <div class="strip" id="strip-batch">Ollama answers as many at once as its server was started with (OLLAMA_NUM_PARALLEL). vLLM batches whatever is in flight.</div>
+  <div class="cols">
+    <div class="card ollama" id="batch-ollama"></div>
+    <div class="card vllm" id="batch-vllm"></div>
+  </div>
+  <div class="bars" id="bars">
+    <div class="bar ollama"><b>Ollama</b><div class="track"><div class="fill" id="fill-ollama"></div></div><span class="n" id="n-ollama"></span></div>
+    <div class="bar vllm"><b>vLLM</b><div class="track"><div class="fill" id="fill-vllm"></div></div><span class="n" id="n-vllm"></span></div>
+  </div>
+  <div class="verdict" id="verdict-batch"></div>
+</section>
+
+<section id="measured">
+  <p class="lede">What the benchmark recorded on the lab GPU, Qwen2.5-7B at fp16 on both servers, 102 questions with 8 in flight. The lab card is shared, so a live run on this page moves with whatever else is running; these are the figures to quote.</p>
+  <div id="measured-body"></div>
+</section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const NAMES = {ollama: "Ollama", vllm: "vLLM"};
+let state = {};
+
+document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
+  document.querySelectorAll("nav button, section").forEach(e => e.classList.remove("on"));
+  b.classList.add("on"); $(b.dataset.tab).classList.add("on");
+});
+
+function esc(s) { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
+function fmt(x, d = 2) { return (x === undefined || x === null) ? "–" : Number(x).toFixed(d); }
+
+function answerCard(side) {
+  return `<div class="head"><span class="name">${NAMES[side]}</span><span class="model">${esc((state[side] || {}).model || "")}</span></div>
+    <div class="nums">
+      <div><div class="v" id="first-${side}">–</div><div class="k">first token, s</div></div>
+      <div><div class="v" id="total-${side}">–</div><div class="k">whole answer, s</div></div>
+      <div><div class="v" id="tok-${side}">–</div><div class="k">tokens</div></div>
+      <div><div class="v" id="rate-${side}">–</div><div class="k">tokens / s</div></div>
+    </div>
+    <div class="answer empty" id="text-${side}">Waiting for a question.</div>
+    <div class="note" id="note-${side}"></div>`;
+}
+
+function batchCard(side, n) {
+  let cells = "";
+  for (let i = 0; i < n; i++) cells += `<div class="cell" id="cell-${side}-${i}">${i + 1}</div>`;
+  return `<div class="head"><span class="name">${NAMES[side]}</span><span class="model">${esc((state[side] || {}).model || "")}</span></div>
+    <div class="nums">
+      <div><div class="v" id="bdone-${side}">0</div><div class="k">answered</div></div>
+      <div><div class="v" id="bwall-${side}">–</div><div class="k">seconds</div></div>
+      <div><div class="v" id="btok-${side}">–</div><div class="k">tokens</div></div>
+      <div><div class="v" id="brate-${side}">–</div><div class="k">tokens / s</div></div>
+    </div>
+    <div class="cells">${cells}</div>
+    <div class="note" id="bnote-${side}">not started</div>`;
+}
+
+async function loadStatus() {
+  state = await (await fetch("/api/status")).json();
+  $("where").textContent = `SatelliteRAG · ${state.satellite} · ${state.sampling}`;
+  for (const side of ["ollama", "vllm"]) {
+    const s = state[side];
+    $("dot-" + side).className = "dot " + (s.up ? "up" : "down");
+    let label = `${NAMES[side]} · ${s.up ? (s.model || "up") : "not reachable"}`;
+    if (side === "ollama" && s.up && !s.has_model) label = `Ollama · ${s.model} not pulled`;
+    $("pill-" + side).textContent = label;
+    $("pill-" + side).title = s.url;
+    $("one-" + side).innerHTML = answerCard(side);
+    $("batch-" + side).innerHTML = batchCard(side, Number($("b-n").value));
+  }
+  $("chips").innerHTML = state.questions.slice(0, 5).map(q => `<span class="chip">${esc(q)}</span>`).join(" ");
+  document.querySelectorAll(".chip").forEach(c => c.onclick = () => { $("q").value = c.textContent; ask(); });
+}
+
+function listen(url, handlers) {
+  const src = new EventSource(url);
+  for (const [name, fn] of Object.entries(handlers))
+    src.addEventListener(name, e => fn(JSON.parse(e.data), src));
+  src.onerror = () => { src.close(); if (handlers.failed) handlers.failed(); };
+  return src;
+}
+
+// ------------------------------------------------------- one question
+
+const timers = {};
+function startTimer(side, target) {
+  const t0 = performance.now();
+  clearInterval(timers[side]);
+  timers[side] = setInterval(() => { $(target + side).textContent = fmt((performance.now() - t0) / 1000, 1); }, 100);
+}
+
+function ask() {
+  const q = $("q").value.trim();
+  if (!q) return;
+  $("ask").disabled = true; $("verdict-one").style.display = "none";
+  const done = {};
+  for (const side of ["ollama", "vllm"]) {
+    $("one-" + side).innerHTML = answerCard(side);
+    $("text-" + side).textContent = "Searching the documents ...";
+  }
+  $("strip-one").textContent = "Routing and searching on this laptop ...";
+  const mode = document.querySelector("input[name=mode]:checked").value;
+  listen(`/api/ask?q=${encodeURIComponent(q)}&mode=${mode}`, {
+    search(d) {
+      $("strip-one").innerHTML = `<b>Search ${fmt(d.search_s)} s</b> on this laptop · route: ${esc(d.route)} · the same ${d.sources.length} passages go to both servers
+        <ol>${d.sources.map(s => `<li>${esc(s)}</li>`).join("")}</ol>`;
+      for (const side of ["ollama", "vllm"]) $("text-" + side).textContent = "Waiting for its turn ...";
+    },
+    caption(d) {
+      for (const side of ["ollama", "vllm"]) { $("text-" + side).className = "answer"; $("text-" + side).textContent = d.text; }
+      $("verdict-one").style.display = "block";
+      $("verdict-one").innerHTML = "A figure request is answered from the figure's caption, without a model, so there is nothing for the servers to differ on.";
+    },
+    start(d) { $("text-" + d.side).textContent = ""; $("text-" + d.side).className = "answer"; startTimer(d.side, "total-"); },
+    token(d) {
+      const el = $("text-" + d.side);
+      if (!el.dataset.first) { el.dataset.first = "1"; $("first-" + d.side).textContent = $("total-" + d.side).textContent; }
+      el.textContent += d.text;
+    },
+    done(d) {
+      clearInterval(timers[d.side]); done[d.side] = d;
+      if (!d.ok) { $("text-" + d.side).textContent = "No answer: " + d.error; $("total-" + d.side).textContent = "–"; return; }
+      $("first-" + d.side).textContent = fmt(d.first_s); $("total-" + d.side).textContent = fmt(d.total_s);
+      $("tok-" + d.side).textContent = d.tokens; $("rate-" + d.side).textContent = fmt(d.tokens_per_s, 0);
+      $("text-" + d.side).textContent = d.text;
+      if (d.ids_removed) $("note-" + d.side).textContent = `${d.ids_removed} identifier(s) not found in the passages were removed by the grounding guard.`;
+    },
+    end(d, src) {
+      src.close(); $("ask").disabled = false;
+      const o = done.ollama, v = done.vllm;
+      if (!o || !v || !o.ok || !v.ok) return;
+      const same = o.text === v.text;
+      const fast = o.total_s < v.total_s ? "ollama" : "vllm", slow = fast === "ollama" ? "vllm" : "ollama";
+      const ratio = done[slow].total_s / done[fast].total_s;
+      const speed = ratio < 1.15 ? "<b>Level per answer</b>" : `<b>${NAMES[fast]} ${fmt(ratio, 1)}× faster on this answer</b>`;
+      $("verdict-one").style.display = "block";
+      $("verdict-one").innerHTML = `${speed}: Ollama ${fmt(o.total_s, 1)} s, vLLM ${fmt(v.total_s, 1)} s. `
+        + (same ? "The two answers are identical, word for word." : "The two answers differ in wording.")
+        + (mode === "together" ? " Both ran at once, so each had part of the card." : "");
+    },
+    failed() { $("ask").disabled = false; $("strip-one").textContent = "The demo server stopped answering. Is it still running?"; },
+  });
+}
+$("ask").onclick = ask;
+$("q").addEventListener("keydown", e => { if (e.key === "Enter") ask(); });
+
+// ------------------------------------------------------------- a batch
+
+function runBatch() {
+  const n = Number($("b-n").value), flight = Math.min(Number($("b-flight").value), n);
+  $("run").disabled = true; $("verdict-batch").style.display = "none"; $("bars").style.display = "none";
+  for (const side of ["ollama", "vllm"]) $("batch-" + side).innerHTML = batchCard(side, n);
+  const count = {ollama: 0, vllm: 0};
+  listen(`/api/batch?n=${n}&flight=${flight}&first=${$("b-first").value}`, {
+    searching(d) { $("strip-batch").textContent = `Searching on this laptop: ${d.done} of ${d.of} questions ...`; },
+    search(d) { $("strip-batch").innerHTML = `<b>Search ${fmt(d.search_s, 1)} s</b> for ${d.n} questions on this laptop, done once. Each server now gets the same ${d.n} prompts, ${flight} in flight.`; },
+    start(d) { $("bnote-" + d.side).textContent = "running ..."; startTimer(d.side, "bwall-"); },
+    answer(d) {
+      const cell = $(`cell-${d.side}-${d.i}`);
+      cell.className = "cell " + (d.ok ? "done" : "fail");
+      cell.textContent = d.ok ? fmt(d.total_s, 1) + " s" : "failed";
+      $("bdone-" + d.side).textContent = ++count[d.side];
+    },
+    side_done(d) {
+      clearInterval(timers[d.side]);
+      $("bwall-" + d.side).textContent = fmt(d.wall_s, 1); $("btok-" + d.side).textContent = d.tokens;
+      $("brate-" + d.side).textContent = fmt(d.tokens_per_s, 0);
+      $("bnote-" + d.side).textContent = d.failed ? `${d.failed} request(s) failed` : "each cell is how long that answer took";
+    },
+    end(d, src) {
+      src.close(); $("run").disabled = false;
+      const o = d.ollama, v = d.vllm;
+      if (!o || !v || !o.tokens_per_s || !v.tokens_per_s) return;
+      const top = Math.max(o.tokens_per_s, v.tokens_per_s);
+      $("bars").style.display = "block";
+      for (const s of [o, v]) {
+        $("fill-" + s.side).style.width = (100 * s.tokens_per_s / top) + "%";
+        $("n-" + s.side).textContent = `${fmt(s.tokens_per_s, 0)} tok/s · ${fmt(s.wall_s, 1)} s`;
+      }
+      const fast = v.tokens_per_s >= o.tokens_per_s ? v : o, slow = fast === v ? o : v;
+      $("verdict-batch").style.display = "block";
+      $("verdict-batch").innerHTML = `<b>${NAMES[fast.side]} ${fmt(fast.tokens_per_s / slow.tokens_per_s, 1)}× the throughput</b> on this batch: `
+        + `${n} answers in ${fmt(fast.wall_s, 1)} s against ${fmt(slow.wall_s, 1)} s. One run on a shared card; the Measured tab has the repeated figures.`;
+    },
+    failed() { $("run").disabled = false; $("strip-batch").textContent = "The demo server stopped answering. Is it still running?"; },
+  });
+}
+$("run").onclick = runBatch;
+$("b-n").onchange = () => { for (const side of ["ollama", "vllm"]) $("batch-" + side).innerHTML = batchCard(side, Number($("b-n").value)); };
+
+// ------------------------------------------------------------ measured
+
+const ARMS = {"ollama-4-slots": "Ollama, 4 parallel slots", "ollama-8-slots": "Ollama, 8 parallel slots", "vllm": "vLLM"};
+const SERIES = {slots: "Ollama: 4 slots against 8", runtime: "Ollama at its best setting against vLLM"};
+
+async function loadMeasured() {
+  const m = await (await fetch("/api/measured")).json();
+  let html = "";
+  if (m.quiet.length) {
+    html += `<h2>On a quiet card, 31 October</h2><table><tr><th>Measure</th><th>Ollama, as installed</th><th>Ollama, 4 slots</th><th>vLLM</th></tr>`
+      + m.quiet.map(r => `<tr><td>${esc(r.metric)}</td><td class="num">${esc(r.ollama)}</td><td class="num">${esc(r.ollama_4_slots)}</td><td class="num">${esc(r.vllm)}</td></tr>`).join("") + `</table>`;
+  }
+  for (const s of m.paired) {
+    const base = s.arms[0].median;
+    html += `<h2>${SERIES[s.series] || s.series}: three paired runs on the shared card, 13 and 14 November</h2>
+      <table><tr><th>Server</th><th>Run 1</th><th>Run 2</th><th>Run 3</th><th>Median, tokens / s</th><th>Against the first row</th></tr>`
+      + s.arms.map(a => `<tr><td>${ARMS[a.arm] || a.arm}</td>${a.runs.map(r => `<td class="num">${fmt(r, 1)}</td>`).join("")}
+          <td class="num"><b>${fmt(a.median, 1)}</b></td><td class="num">${fmt(a.median / base, 1)}×</td></tr>`).join("") + `</table>`;
+  }
+  $("measured-body").innerHTML = html || "<p class='lede'>No recorded results were found in bench/.</p>";
+}
+
+loadStatus().then(loadMeasured);
+</script>
+</body>
+</html>
