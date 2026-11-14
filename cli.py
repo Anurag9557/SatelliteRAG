@@ -34,10 +34,11 @@ Searching:
 """
 
 import argparse
+import time
 from pathlib import Path
 
-from core import (caption, embeddings, extract, generate, ingest, registry,
-                  rerank, retrieve, router)
+from core import (caption, embeddings, extract, generate, ingest, llm,
+                  registry, rerank, retrieve, router)
 
 
 def _table(rows, headers, widths):
@@ -220,15 +221,29 @@ def run_query(sats, query, top_k, doc_types, subsystem, show_text,
                                plan=plan)
         router.log_plan(query, plan, hits)
     else:
-        answer, hits = generate.ask(sats, query, top_k=top_k,
-                                    doc_types=doc_types,
-                                    subsystem=subsystem, model=model,
-                                    plan=plan)
+        # Timed in two parts, so a demo can show where the seconds go: the
+        # search runs on this machine, the answer on whichever server
+        # SATRAG_LLM points at. The first search in a process also loads
+        # the embedding and reranker models, so it is the slowest.
+        t0 = time.perf_counter()
+        hits = retrieve.search(sats, query, top_k=top_k,
+                               doc_types=doc_types, subsystem=subsystem,
+                               plan=plan)
+        t1 = time.perf_counter()
+        answer = generate.generate(query, hits, model=model,
+                                   show_satellite=len(sats) > 1, plan=plan)
+        t2 = time.perf_counter()
+        router.log_plan(query, plan, hits)
         print(f"{answer}\n")
+        where = llm.VLLM_URL if llm.BACKEND == "vllm" else llm.OLLAMA_URL
+        print(f"[time] search {t1 - t0:.1f} s  |  answer {t2 - t1:.1f} s "
+              f"({llm.BACKEND} at {where})  |  total {t2 - t0:.1f} s\n")
         # The model cited none of these when it said nothing matched, so
         # listing them as "Sources" would misrepresent nearest-neighbor
-        # noise as relevant citations.
-        if generate.NOT_FOUND_MESSAGE in answer:
+        # noise as relevant citations. Only a reply that is the refusal and
+        # nothing else counts: the 7B sometimes ends a real answer with the
+        # sentence, and that answer's sources were being hidden.
+        if answer.strip().rstrip(".") == generate.NOT_FOUND_MESSAGE.rstrip("."):
             return hits
         print("Sources:")
     print(retrieve.format_hits(hits, show_satellite=len(sats) > 1,

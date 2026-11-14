@@ -12,7 +12,9 @@ satellites/<slug>/extracted/ is. bench/cache/ and bench/results/ are both in
 .gitignore and must stay there.
 """
 
+import hashlib
 import json
+import os
 import re
 import statistics
 import sys
@@ -25,16 +27,27 @@ sys.path.insert(0, str(REPO_ROOT))
 
 BENCH_DIR  = Path(__file__).resolve().parent
 CACHE_DIR  = BENCH_DIR / "cache"
-RESULT_DIR = BENCH_DIR / "results"
+# Overridable so the OLLAMA_NUM_PARALLEL arm can be written to its own
+# directory by the script that runs it, instead of being moved there by hand.
+RESULT_DIR = Path(os.environ.get("BENCH_RESULT_DIR", BENCH_DIR / "results"))
 
 # Matches the QA pairs lora/build_dataset.py asks the model to produce. The
 # string "json" form that the project passes today gets valid JSON of any
 # shape; this schema is what pins the shape down.
+# The prompt asks for one or two pairs. Without minItems/maxItems the
+# grammar permits an array of any length, and a guided decoder will happily
+# keep emitting items until it hits max_tokens, leaving JSON that never
+# closes. Ollama's backend terminated anyway; vLLM's did not, and 17 of 50
+# chunks came back as unparseable truncated output that took five times
+# longer to produce. Guided decoding constrains shape, not length, and the
+# bound has to be written into the schema.
 QA_SCHEMA = {
     "type": "object",
     "properties": {
         "pairs": {
             "type": "array",
+            "minItems": 1,
+            "maxItems": 2,
             "items": {
                 "type": "object",
                 "properties": {
@@ -48,10 +61,85 @@ QA_SCHEMA = {
     "required": ["pairs"],
 }
 
+# A grammar enforces shape but cannot supply intent. Asked plainly, a small
+# instruct model answers this prompt in markdown; forced by the grammar to
+# open with "{" it is off the distribution it was trained on and falls back
+# to the highest-probability legal token, which in JSON is whitespace, for
+# as long as the token budget lasts. vLLM failed a third of chunks that way.
+# Bounding the array, disable_any_whitespace and whitespace_pattern all made
+# no difference; this system turn fixed it outright. Sent to both backends,
+# so the arms differ only in how the schema is passed.
+JSON_SYSTEM = (
+    "You output only a single JSON object. No prose, no markdown, no code "
+    "fences, and no blank space between tokens."
+)
+
 QA_PROMPT = (
     "Write 1 to 2 question/answer pairs that are answerable using ONLY the "
     "excerpt below. Keep answers to 1-3 sentences.\n\nExcerpt:\n{excerpt}"
 )
+
+
+def _builder_prompt():
+    """lora/build_dataset.py's own system prompt, read from the file.
+
+    The "json-string" arm above uses the bench's prompt, which never names
+    a "pairs" key, so it scores zero on shape by construction and says
+    nothing about how often the real builder loses a chunk. The "builder"
+    arm sends exactly what build_dataset.py sends and parses the reply with
+    exactly its rescue branches, so its drop count is the real one.
+    Imported rather than copied, so an edit to the builder shows up here.
+
+    Note the date. The 28 October numbers (42 pairs, 8 of 50 dropped) were
+    measured against the builder as it was then: format="json" and a
+    prompt asking for a bare array. build_dataset.py now passes a schema
+    and asks for {"pairs": [...]}, so this arm, which still sends
+    format="json" without the schema, no longer reproduces "today".
+    """
+    import importlib.util
+    path = REPO_ROOT / "lora" / "build_dataset.py"
+    spec = importlib.util.spec_from_file_location("_bd", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)   # stdlib-only at module level
+    return mod.SYNTH_SYSTEM_PROMPT, mod.MAX_CHARS
+
+
+def builder_parse(text: str):
+    """build_dataset.synthesize_with_ollama's parsing, branch for branch.
+
+    Returns (pairs, path) where path names which branch produced them, so
+    the report can say how many chunks only survived because of a rescue.
+    """
+    try:
+        data = json.loads(text.strip())
+    except (json.JSONDecodeError, TypeError):
+        return [], "unparseable"
+    path = "array"
+    if isinstance(data, dict):
+        if "question" in data and "answer" in data:
+            data, path = [data], "rescued:single-object"
+        else:
+            got = data.get("pairs") or data.get("qa")
+            data, path = (got or []), ("rescued:wrapper-key" if got
+                                       else "dropped:other-dict")
+    pairs = []
+    try:
+        for item in data:
+            q = (item.get("question") or "").strip()
+            a = (item.get("answer") or "").strip()
+            if q and a:
+                pairs.append((q, a))
+    except AttributeError:
+        # A list of strings, or similar: build_dataset's blanket except
+        # catches this and returns [], silently.
+        return [], "dropped:exception"
+    if not pairs and not path.startswith("dropped"):
+        path = "dropped:empty"
+    return pairs, path
+
+
+def _digest(text: str) -> str:
+    return hashlib.sha1(text.encode("utf-8")).hexdigest()[:10]
 
 
 # ---------------------------------------------------------------- cache
@@ -105,6 +193,17 @@ def build_context_cache(slug: str, limit: int = 0, force: bool = False) -> Path:
 
     out.write_text(json.dumps(records, indent=2), encoding="utf-8")
     print(f"    wrote {out}")
+
+    # Freeze the prompt alongside the context. See prompt_meta().
+    import core.generate as gen
+    meta = {
+        "system_prompt": gen.SYSTEM_PROMPT,
+        "not_found": getattr(gen, "NOT_FOUND_MESSAGE",
+                             "Not found in available documents."),
+    }
+    (CACHE_DIR / f"prompt_{slug}.json").write_text(
+        json.dumps(meta, indent=2), encoding="utf-8")
+    print(f"    wrote prompt_{slug}.json")
     return out
 
 
@@ -117,6 +216,61 @@ def load_context(slug: str) -> list:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def take(records: list, n: int) -> list:
+    """First n answerable questions, plus every negative.
+
+    Slicing the list plainly drops the negatives, because they sit at the
+    end, and the quality scenario then reports 0/0 correct refusals while
+    looking for all the world like it ran. A capped run should still
+    exercise the refusal path, which is half of what answer quality means
+    here.
+    """
+    pos = [r for r in records if not r.get("is_negative")][:n]
+    neg = [r for r in records if r.get("is_negative")]
+    return pos + neg
+
+
+def prompt_meta(slug: str) -> dict:
+    """The system prompt and refusal string, frozen when the cache was built.
+
+    Reading them from disk rather than importing core.generate buys two
+    things. The run phase stays free of the project's heavy imports, which
+    have nothing to do with generation but pull in PyMuPDF and ChromaDB and
+    so cannot live in a bare vLLM environment. And the prompt is pinned to
+    the moment the cache was built, so two runs days apart compare backends
+    rather than prompt edits.
+
+    BENCH_PROMPT names a prompt in bench/prompts/ (v1, v2, ...) to run
+    instead, for comparing prompt versions on the same frozen passages.
+    The prompt's name goes into every result file, so two runs cannot be
+    mixed up later.
+    """
+    choice = os.environ.get("BENCH_PROMPT")
+    if choice:
+        path = BENCH_DIR / "prompts" / f"{choice}.json"
+        if not path.exists():
+            raise SystemExit(f"BENCH_PROMPT={choice}: no {path}")
+        meta = json.loads(path.read_text(encoding="utf-8"))
+        meta.setdefault("name", choice)
+        return meta
+    path = CACHE_DIR / f"prompt_{slug}.json"
+    if path.exists():
+        meta = json.loads(path.read_text(encoding="utf-8"))
+        meta.setdefault("name", "cache")
+        return meta
+    try:
+        import core.generate as gen
+        return {"system_prompt": gen.SYSTEM_PROMPT,
+                "not_found": getattr(gen, "NOT_FOUND_MESSAGE",
+                                     "Not found in available documents.")}
+    except Exception as exc:
+        raise SystemExit(
+            f"No prompt metadata at {path}, and core.generate will not "
+            f"import here ({type(exc).__name__}: {exc}).\n"
+            f"Rebuild the cache where the project's dependencies are "
+            f"installed:  python bench/run.py cache {slug}")
+
+
 def load_chunks(slug: str, limit: int) -> list:
     """Raw chunks, for the structured-output scenario."""
     path = REPO_ROOT / "satellites" / slug / "extracted" / "chunks.json"
@@ -127,14 +281,35 @@ def load_chunks(slug: str, limit: int) -> list:
     return usable[:limit] if limit else usable
 
 
-def _messages(record: dict) -> list:
-    """The real system prompt, so this measures the real workload."""
-    from core.generate import SYSTEM_PROMPT
+_GROUNDING = None
+
+
+def _grounding():
+    """core/grounding.py, loaded by path: standard library only, so this
+    keeps the run phase free of core/__init__ and its heavy imports."""
+    global _GROUNDING
+    if _GROUNDING is None:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "grounding", REPO_ROOT / "core" / "grounding.py")
+        _GROUNDING = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_GROUNDING)
+    return _GROUNDING
+
+
+def _messages(record: dict, meta: dict) -> list:
+    """The real system prompt, so this measures the real workload.
+    A prompt file with "context_note": true also gets the line the app adds
+    after the question (core/grounding.context_note)."""
+    user = (f"Context:\n{record['context']}\n\n"
+            f"Question: {record['question']}")
+    if meta.get("context_note"):
+        note = _grounding().context_note(record["context"])
+        if note:
+            user += f"\n\n{note}"
     return [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user",
-         "content": f"Context:\n{record['context']}\n\n"
-                    f"Question: {record['question']}"},
+        {"role": "system", "content": meta["system_prompt"]},
+        {"role": "user", "content": user},
     ]
 
 
@@ -156,7 +331,8 @@ def _summarise(values: list) -> dict:
 # ------------------------------------------------------------ scenarios
 
 
-def scenario_latency(backend, records: list, max_tokens: int) -> dict:
+def scenario_latency(backend, records: list, max_tokens: int,
+                     meta: dict) -> dict:
     """
     One request at a time, which is how the CLI is actually used.
 
@@ -167,7 +343,7 @@ def scenario_latency(backend, records: list, max_tokens: int) -> dict:
     """
     rows = []
     for i, rec in enumerate(records, 1):
-        r = backend.chat(_messages(rec), max_tokens=max_tokens)
+        r = backend.chat(_messages(rec, meta), max_tokens=max_tokens)
         rows.append({
             "id": rec["id"], "ok": r.ok, "error": r.error,
             "ttft_s": round(r.ttft_s, 4), "total_s": round(r.total_s, 4),
@@ -178,6 +354,12 @@ def scenario_latency(backend, records: list, max_tokens: int) -> dict:
               f"total {r.total_s:6.2f}s", flush=True)
 
     good = [x for x in rows if x["ok"]]
+    # Total time is only comparable when both sides write answers of the
+    # same length, and the first run's did not (median 131 vs 172 tokens).
+    # Seconds per 100 output tokens, prefill included, is the figure a user
+    # waiting on an answer of a given size actually feels.
+    per100 = [100 * x["total_s"] / x["out_tokens"]
+              for x in good if x["out_tokens"]]
     return {
         "rows":      rows,
         "n_ok":      len(good),
@@ -185,11 +367,13 @@ def scenario_latency(backend, records: list, max_tokens: int) -> dict:
         "ttft_s":    _summarise([x["ttft_s"] for x in good]),
         "total_s":   _summarise([x["total_s"] for x in good]),
         "tok_per_s": _summarise([x["tok_per_s"] for x in good]),
+        "s_per_100_tok": _summarise(per100),
+        "out_tokens": _summarise([x["out_tokens"] for x in good]),
     }
 
 
 def scenario_throughput(backend, records: list, max_tokens: int,
-                        concurrency: int) -> dict:
+                        concurrency: int, meta: dict) -> dict:
     """
     The same requests fired with N in flight, which is the captioning and
     QA-synthesis shape: many independent jobs, nobody waiting on any one.
@@ -200,7 +384,7 @@ def scenario_throughput(backend, records: list, max_tokens: int,
     start = time.perf_counter()
     with ThreadPoolExecutor(max_workers=concurrency) as pool:
         replies = list(pool.map(
-            lambda rec: backend.chat(_messages(rec), max_tokens=max_tokens),
+            lambda rec: backend.chat(_messages(rec, meta), max_tokens=max_tokens),
             records))
     wall = time.perf_counter() - start
 
@@ -220,7 +404,7 @@ def scenario_throughput(backend, records: list, max_tokens: int,
 
 
 def scenario_determinism(backend, records: list, max_tokens: int,
-                         repeats: int) -> dict:
+                         repeats: int, meta: dict) -> dict:
     """
     The same question several times at temperature 0 and a fixed seed.
 
@@ -231,15 +415,23 @@ def scenario_determinism(backend, records: list, max_tokens: int,
     """
     rows = []
     for rec in records:
-        texts = [backend.chat(_messages(rec), max_tokens=max_tokens,
+        texts = [backend.chat(_messages(rec, meta), max_tokens=max_tokens,
                               seed=1234).text
                  for _ in range(repeats)]
         distinct = len(set(texts))
+        digests = [_digest(t) for t in texts]
+        # Where the first divergent repeat sits matters. If only repeat 0
+        # differs, the cause is the prefill path (a cold prefix cache on the
+        # first call, cache hits after it), not randomness.
+        first_diff = next((i for i, d in enumerate(digests)
+                           if d != digests[0]), None)
         rows.append({
             "id": rec["id"],
             "repeats": repeats,
             "distinct_outputs": distinct,
             "all_identical": distinct == 1,
+            "digests": digests,
+            "first_divergent_repeat": first_diff,
         })
         print(f"      {rec['id']:<22} {distinct} distinct / {repeats}",
               flush=True)
@@ -253,7 +445,30 @@ def scenario_determinism(backend, records: list, max_tokens: int,
     }
 
 
-def scenario_quality(backend, records: list, max_tokens: int) -> dict:
+def classify_refusal(text: str, not_found: str) -> tuple:
+    """(refused, tacked_on) for one answer.
+
+    Counting any answer that contains the not-found sentence as a refusal
+    overcounted the 7B badly: it often gives a real answer and then adds
+    "Not found in available documents." at the end (29 flagged at 7B fp16,
+    19 real when read). A refusal is an answer that says nothing else,
+    meaning under 20 characters remain once the sentence is taken out (an
+    FCP number and title on their own are an answer, not a refusal). An answer
+    that does say something AND carries the sentence is counted apart, as
+    a style fault the v2 prompt is meant to remove.
+    """
+    low = text.lower()
+    if not_found.lower() not in low:
+        return False, False
+    rest = re.sub(re.escape(not_found.lower()), " ", low)
+    rest = re.sub(r"[\s\W_]+", " ", rest).strip()
+    if len(rest) < 20:
+        return True, False
+    return False, True
+
+
+def scenario_quality(backend, records: list, max_tokens: int,
+                     meta: dict) -> dict:
     """
     Answers dumped for scoring, with the two checks that can be automated.
 
@@ -261,24 +476,20 @@ def scenario_quality(backend, records: list, max_tokens: int) -> dict:
     whether the answer pointed at a source at all, and whether it refused.
     Both are worth counting before anyone starts reading.
     """
-    # Named constant only in the newer core/generate.py. Older copies put
-    # the same sentence in SYSTEM_PROMPT without naming it, so fall back to
-    # the literal rather than making this scenario need a particular commit.
-    import core.generate as gen
-    not_found = getattr(gen, "NOT_FOUND_MESSAGE",
-                        "Not found in available documents.")
+    not_found = meta["not_found"]
 
     cite = re.compile(r"\b(FCP[-\s]?\d{4}|p\.\s?\d+|MOR|OPS_MANUAL|"
                       r"GUIDELINES|HANDBOOK)\b", re.I)
     rows = []
     for i, rec in enumerate(records, 1):
-        r = backend.chat(_messages(rec), max_tokens=max_tokens)
-        refused = not_found.lower() in r.text.lower()
+        r = backend.chat(_messages(rec, meta), max_tokens=max_tokens)
+        refused, tacked_on = classify_refusal(r.text, not_found)
         rows.append({
             "id": rec["id"], "question": rec["question"],
             "answer": r.text, "ok": r.ok,
             "is_negative": rec.get("is_negative", False),
             "refused": refused,
+            "not_found_tacked_on": tacked_on,
             "has_citation": bool(cite.search(r.text)),
             "chars": len(r.text), "out_tokens": r.out_tokens,
         })
@@ -301,6 +512,7 @@ def scenario_quality(backend, records: list, max_tokens: int) -> dict:
         "false_refusals": sum(1 for x in pos if x["refused"]),
         "false_refusal_rate": round(
             sum(1 for x in pos if x["refused"]) / len(pos), 3) if pos else 0,
+        "not_found_tacked_on": sum(1 for x in pos if x["not_found_tacked_on"]),
         "cited_rate": round(
             sum(1 for x in pos if x["has_citation"]) / len(pos), 3)
         if pos else 0,
@@ -324,43 +536,72 @@ def scenario_structured(backend, chunks: list, arm: str,
     the adapter never sees.
     """
     schema = {"json-string": "json", "schema": QA_SCHEMA,
-              "none": None}[arm]
+              "none": None, "builder": "json"}[arm]
+    if arm == "builder":
+        synth_system, max_chars = _builder_prompt()
 
     rows = []
     for i, chunk in enumerate(chunks, 1):
-        prompt = QA_PROMPT.format(excerpt=chunk["text"][:3000])
-        r = backend.chat([{"role": "user", "content": prompt}],
-                         max_tokens=max_tokens, schema=schema)
+        if arm == "builder":
+            # Byte for byte what build_dataset.py sends today.
+            messages = [
+                {"role": "system", "content": synth_system},
+                {"role": "user", "content":
+                    f"Excerpt (from {chunk.get('doc_filename','')}):\n"
+                    f"{chunk['text'][:max_chars]}"},
+            ]
+        else:
+            prompt = QA_PROMPT.format(excerpt=chunk["text"][:3000])
+            messages = [{"role": "system", "content": JSON_SYSTEM},
+                        {"role": "user", "content": prompt}]
+        r = backend.chat(messages, max_tokens=max_tokens, schema=schema)
 
-        parsed, shaped, pairs = False, False, 0
-        try:
-            data = json.loads(r.text)
-            parsed = True
-            # The shape the caller wants with no rescue branching: an object
-            # with a "pairs" list of question/answer objects.
-            items = data.get("pairs") if isinstance(data, dict) else None
-            if isinstance(items, list) and items and all(
-                    isinstance(p, dict) and p.get("question") and
-                    p.get("answer") for p in items):
-                shaped, pairs = True, len(items)
-        except (json.JSONDecodeError, AttributeError, TypeError):
-            pass
+        parsed, shaped, pairs, path = False, False, 0, ""
+        if arm == "builder":
+            got, path = builder_parse(r.text)
+            parsed = path != "unparseable"
+            shaped = path == "array" and bool(got)  # no rescue needed
+            pairs = len(got)
+        else:
+            try:
+                data = json.loads(r.text)
+                parsed = True
+                # The shape the caller wants with no rescue branching: an
+                # object with a "pairs" list of question/answer objects.
+                items = data.get("pairs") if isinstance(data, dict) else None
+                if isinstance(items, list) and items and all(
+                        isinstance(p, dict) and p.get("question") and
+                        p.get("answer") for p in items):
+                    shaped, pairs = True, len(items)
+            except (json.JSONDecodeError, AttributeError, TypeError):
+                pass
 
         rows.append({
             "chunk_id": chunk.get("chunk_id", f"#{i}"),
             "ok": r.ok, "parsed": parsed, "shaped": shaped,
-            "pairs": pairs, "total_s": round(r.total_s, 3),
+            "pairs": pairs, "path": path, "total_s": round(r.total_s, 3),
+            # Kept so a surprising count can be checked by reading the
+            # reply. Results are gitignored, like the cache.
+            "text": r.text[:2000],
         })
         if i % 10 == 0 or i == len(chunks):
             print(f"      {i}/{len(chunks)}", flush=True)
 
     n = len(rows) or 1
-    return {
+    out = {
         "arm": arm,
         "rows": rows,
         "n_chunks": len(rows),
         "parsed_rate": round(sum(1 for x in rows if x["parsed"]) / n, 3),
         "shaped_rate": round(sum(1 for x in rows if x["shaped"]) / n, 3),
         "total_pairs": sum(x["pairs"] for x in rows),
+        "chunks_with_pairs": sum(1 for x in rows if x["pairs"]),
         "per_chunk_s": _summarise([x["total_s"] for x in rows]),
     }
+    if arm == "builder":
+        paths = {}
+        for x in rows:
+            paths[x["path"]] = paths.get(x["path"], 0) + 1
+        out["paths"] = paths
+        out["chunks_dropped"] = sum(1 for x in rows if not x["pairs"])
+    return out

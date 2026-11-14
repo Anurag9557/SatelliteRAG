@@ -18,13 +18,38 @@ benchmark nobody runs.
 """
 
 import json
+import os
+import re
 import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 
-OLLAMA_URL = "http://localhost:11434/api/chat"
-VLLM_URL   = "http://localhost:8000/v1/chat/completions"
+# Ports are overridable because the lab GPU box is shared: its system Ollama
+# already owns 11434 and is used by other people, so the bench runs its own
+# servers on spare ports there (bench/gpu/run_gpu.sh).
+_OLLAMA = os.environ.get("BENCH_OLLAMA", "http://localhost:11434")
+_VLLM   = os.environ.get("BENCH_VLLM", "http://localhost:8000")
+OLLAMA_URL = f"{_OLLAMA}/api/chat"
+VLLM_URL   = f"{_VLLM}/v1/chat/completions"
+VLLM_METRICS_URL = f"{_VLLM}/metrics"
+
+# Sent explicitly on every request to both servers, so neither side falls
+# back to a default the other does not share. The first full run did not do
+# this: vLLM loaded the model's generation_config.json and applied
+# repetition_penalty=1.1 to every request (its startup log says so), while
+# the Ollama side looped to the 512-token cap on 14 of 100 answers. Answer
+# length, citation rate and refusals then measured the penalty, not the
+# runtime. 1.0 means "no penalty", the only setting both implement the same
+# way: Ollama penalises the last 64 tokens, vLLM the whole sequence, so 1.1
+# on both would still not be the same computation.
+REPETITION_PENALTY = float(os.environ.get("BENCH_REPETITION_PENALTY", "1.0"))
+
+
+def sampling_note() -> dict:
+    """Recorded in every result file, so a reader can see what was pinned."""
+    return {"temperature": 0.0, "repetition_penalty": REPETITION_PENALTY,
+            "sent_explicitly_to_both": True}
 
 # Long enough that a slow first load does not look like a failure, short
 # enough that a wedged server does not hang the whole run.
@@ -109,10 +134,11 @@ class Ollama(Backend):
             "messages": messages,
             "stream":   True,
             "options": {
-                "temperature": temperature,
-                "seed":        seed,
-                "num_ctx":     self.num_ctx,
-                "num_predict": max_tokens,
+                "temperature":    temperature,
+                "seed":           seed,
+                "num_ctx":        self.num_ctx,
+                "num_predict":    max_tokens,
+                "repeat_penalty": REPETITION_PENALTY,
             },
         }
         if schema is not None:
@@ -174,10 +200,30 @@ class VLLM(Backend):
             "temperature": temperature,
             "seed":        seed,
             "max_tokens":  max_tokens,
+            "repetition_penalty": REPETITION_PENALTY,
             "stream_options": {"include_usage": True},
         }
         if schema is not None:
-            payload["structured_outputs"] = {"json": schema}
+            # disable_any_whitespace is a per-request field on
+            # StructuredOutputsParams, not a server flag in this build.
+            # Left off, the JSON grammar admits arbitrary whitespace
+            # between tokens, and the decoder can emit "{" followed by
+            # spaces and carriage returns until max_tokens runs out. That
+            # output never violates the schema, so the constraint cannot
+            # stop it, and a third of requests came back as unparseable
+            # whitespace with finish_reason "length".
+            if schema == "json":
+                # The "any valid JSON" mode, vLLM's equivalent of Ollama's
+                # format="json", for the builder arm.
+                payload["structured_outputs"] = {
+                    "json_object": True,
+                    "disable_any_whitespace": True,
+                }
+            else:
+                payload["structured_outputs"] = {
+                    "json": schema,
+                    "disable_any_whitespace": True,
+                }
 
         reply = Reply()
         parts = []
@@ -216,6 +262,58 @@ class VLLM(Backend):
             reply.out_tokens = deltas
         return reply
 
+    # ------------------------------------------------------------ metrics
+
+    @staticmethod
+    def metrics() -> dict:
+        """Sum of each vllm:* gauge/counter on the Prometheus endpoint.
+
+        Used for two things. Before a scenario: refuse to time anything if
+        the engine already has requests running or waiting, because that
+        means another client is on the server. The first full run had four
+        copies of the benchmark on one engine and nothing noticed. After a
+        scenario: the prefix-cache hit rate, so a low TTFT can be read as
+        prefill speed or as cache hits rather than guessed at.
+        """
+        try:
+            with urllib.request.urlopen(VLLM_METRICS_URL, timeout=10) as r:
+                text = r.read().decode("utf-8", "replace")
+        except (urllib.error.URLError, OSError):
+            return {}
+        out = {}
+        for line in text.splitlines():
+            if not line.startswith("vllm:"):
+                continue
+            m = re.match(r"(vllm:[A-Za-z_:]+)(\{[^}]*\})?\s+([0-9.eE+-]+)", line)
+            if m:
+                out[m.group(1)] = out.get(m.group(1), 0.0) + float(m.group(3))
+        return out
+
+    def health(self) -> str:
+        m = self.metrics()
+        busy = (m.get("vllm:num_requests_running", 0)
+                + m.get("vllm:num_requests_waiting", 0))
+        if busy:
+            return (f"down: server already has {int(busy)} request(s) in "
+                    f"flight, so another client is using it. Stop it first.")
+        return super().health()
+
+
+def prefix_hit_rate(before: dict, after: dict):
+    """Hit rate over one scenario, from the counter deltas. None if absent."""
+    def pick(m, *names):
+        for n in names:
+            if n in m:
+                return m[n]
+        return None
+    q0 = pick(before, "vllm:prefix_cache_queries_total", "vllm:prefix_cache_queries")
+    q1 = pick(after,  "vllm:prefix_cache_queries_total", "vllm:prefix_cache_queries")
+    h0 = pick(before, "vllm:prefix_cache_hits_total", "vllm:prefix_cache_hits")
+    h1 = pick(after,  "vllm:prefix_cache_hits_total", "vllm:prefix_cache_hits")
+    if None in (q0, q1, h0, h1) or q1 - q0 <= 0:
+        return None
+    return round((h1 - h0) / (q1 - q0), 3)
+
 
 # Model pairs. The point of the fp16 profile is that both servers run the
 # same weights at the same precision, so a quality difference is the runtime
@@ -235,6 +333,24 @@ PROFILES = {
         "ollama": "qwen2.5:0.5b-instruct-fp16",      # 994 MB
         "vllm":   "Qwen/Qwen2.5-0.5B-Instruct",
         "note":   "the base Abhinav's LoRA adapter was trained on",
+    },
+    # The project's real generator size. Neither side can hold 7B at fp16 in
+    # 6 GB, so both run 4-bit, in different formats: Ollama's GGUF Q4_K_M
+    # (which already spills 4 of 29 layers to the CPU on this card) and
+    # vLLM's AWQ, which needs --cpu-offload-gb to fit at all. Read it as
+    # "7B on this laptop", not as a clean runtime comparison.
+    "laptop-7b": {
+        "ollama": "qwen2.5:7b-instruct",             # Q4_K_M, 4.7 GB
+        "vllm":   "Qwen/Qwen2.5-7B-Instruct-AWQ",
+        "note":   "7B at 4-bit on both (Q4_K_M vs AWQ), partly offloaded to CPU on both",
+    },
+    # The lab GPU box (48 GB). 7B at fp16 on both: same weights, same
+    # precision, everything on the card. This is the comparison the laptop
+    # could not make.
+    "gpu-7b-fp16": {
+        "ollama": "qwen2.5:7b-instruct-fp16",        # 15 GB
+        "vllm":   "Qwen/Qwen2.5-7B-Instruct",
+        "note":   "7B, same weights, fp16 on both, fully on a 48 GB card (shared box)",
     },
     "as-deployed": {
         "ollama": "qwen2.5:1.5b-instruct",           # 4-bit

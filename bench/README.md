@@ -92,6 +92,31 @@ the machine is air-gapped, download on a connected machine and copy
 
 ## Running it
 
+**Use `bench/wsl/clean_rerun.sh`.** It runs every scenario on both backends
+in one guarded pass (about 75 minutes) and is how the numbers in the deck
+were produced after 28 October. The manual steps below still work, but the
+first full run done by hand went wrong in three ways that nothing in the
+output showed:
+
+- **Four copies of the vLLM phase ran at once** against one engine. The
+  engine log showed `Running: 4 reqs` through the sequential latency test.
+  `run.py` now holds a lock and refuses to time against a vLLM engine that
+  already has requests in flight.
+- **Sampling was not matched.** vLLM applies the model's
+  `generation_config.json` by default (`repetition_penalty=1.1` for
+  Qwen2.5), and says so in a startup warning. Both backends now send
+  `repetition_penalty=1.0` explicitly, the server runs with
+  `--generation-config vllm`, and every result file records the settings.
+- **One long-lived engine carried its prefix cache from scenario to
+  scenario**, so throughput replayed prompts latency had already cached.
+  The script starts a fresh engine per scenario and records the hit rate.
+
+The structured scenario's `builder` arm sends exactly what
+`lora/build_dataset.py` sends and parses the reply with its own rescue
+branches, so its "chunks dropped" figure is the builder's real loss rate.
+The older `json-string` arm uses the bench's prompt, which never names the
+`pairs` key, and scores zero on shape by construction.
+
 The repo lives on the Windows disk, reachable from WSL:
 
 ```bash
@@ -172,6 +197,41 @@ to commit and to share.
 
 Medians and p95, never means: the first request to either server pays for a
 cold cache and would drag a mean into nonsense.
+
+"Tuned Ollama" means `OLLAMA_NUM_PARALLEL=4` for text and `=2` for
+captioning. The client kept 8 requests in flight in the text runs (4
+against Ollama when captioning), and vLLM batched all 8. So the batch
+ratios in the comparison tables are against Ollama at 4 and 2 slots, and
+should be quoted with the slot count beside them.
+
+Four slots turned out not to be Ollama's best setting. On 13 and 14
+November the lab card was shared and never quiet, so the question was put
+as paired runs instead: two arms alternated three times, each pair seeing
+the same background load (the card read 94 to 100% from other jobs before
+every run). Same model, same 102 questions, 8 in flight
+(`bench/results-gpu-paired/paired.csv`):
+
+    Ollama, 4 slots     54.0   55.0   52.7  tok/s
+    Ollama, 8 slots     79.4   78.5   83.2          1.5x the 4-slot arm
+    Ollama, 8 slots     79.0   77.1   76.9  tok/s
+    vLLM               160.2  161.0  160.7          2.1x Ollama at 8 slots
+
+Absolute speeds on a loaded card mean little: these are a third of the
+quiet-card figures. The ratios within a pair are the result. Against
+Ollama at its best measured setting vLLM is 2.1x on batch work, not far
+from the 2.2x measured against 4 slots on the quiet card, because under
+load vLLM's lead over the 4-slot arm widens to about 3x. Captioning has
+not been repeated this way and still stands against Ollama at 2 slots.
+
+The cached passages in `bench/cache/` were retrieved on 28 October, with
+the rules router and before the command log's columns were corrected.
+They are frozen on purpose: every generation run in these folders saw the
+same passages, which is what makes them comparable. Rebuilding the cache
+with today's retrieval would start a new series, not extend this one.
+
+False refusals in `comparison.md` are recounted by `report.py` from the
+saved answers each time. The count stored inside older result files used
+a looser rule and overstated the 7B (29 of 100 where 20 were refusals).
 
 Both backends are driven over HTTP with streaming on, because time to first
 token has to be measured at the same point in both paths. That costs vLLM

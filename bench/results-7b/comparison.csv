@@ -1,0 +1,23 @@
+"Profile: laptop-7b (7B at 4-bit on both (Q4_K_M vs AWQ), partly offloaded to CPU on both)"
+"Machine: NVIDIA GeForce RTX 3050 6GB Laptop GPU, 6144 MiB, 581.86 | Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-glibc2.39 | WSL2"
+Model (ollama): qwen2.5:7b-instruct
+Model (vllm): Qwen/Qwen2.5-7B-Instruct-AWQ
+"Sampling (both, sent explicitly): {""repetition_penalty"": 1.0, ""sent_explicitly_to_both"": true, ""temperature"": 0.0}"
+
+metric,ollama_default,ollama_tuned,vllm,verdict
+"Single-query TTFT, median (s)",1.715,not run,1.13,34% to vLLM
+"Single-query TTFT, p95 (s)",9.349,not run,1.552,83% to vLLM
+"Single-query total, median (s)",8.611,not run,28.1,226% to Ollama
+"Decode rate, median (tok/s)",17.815,not run,3.61,80% to Ollama
+"Seconds per 100 output tokens, median",7.619,not run,29.86,292% to Ollama
+"Output tokens per answer, median",119.5,not run,95,
+"Prefix-cache hit rate, latency run",not run,not run,0.206,
+Batch wall clock (s),366.96,not run,269.06,27% to vLLM
+Batch throughput (req/s),0.114,not run,0.156,37% to vLLM
+Batch throughput (tok/s),16.7,not run,19.3,16% to vLLM
+Answers carrying a citation,0.5,not run,0.45,10% to Ollama
+Correct refusals (out-of-scope),2/2,not run,2/2,
+False refusals (answerable),10/40,not run,7/40,
+Real answers ending in the not-found line,4/40,not run,12/40,
+Median answer length (chars),527,not run,301,
+Answers that hit the token cap,1/42,not run,0/42,

@@ -69,8 +69,32 @@ def envelope(backend, profile: str, scenario: str, body: dict,
         "run_at":    datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "machine":   machine(),
         "elapsed_s": round(elapsed, 1),
+        "sampling":  backends.sampling_note(),
         "result":    body,
     }
+
+
+def single_instance():
+    """Refuse to start if another copy of this runner is already timing.
+
+    The first full run went wrong exactly here: phase C was launched four
+    times, all four copies drove one vLLM engine at once, and each wrote its
+    numbers over the others. Nothing in the output said so; it took the
+    engine log (Running: 4 reqs during a sequential test) to show it. The
+    lock lives in /tmp on the Linux side because /mnt/c does not honour
+    flock. On Windows there is no fcntl and the guard is skipped.
+    """
+    try:
+        import fcntl
+    except ImportError:
+        return None
+    fh = open("/tmp/satrag_bench.lock", "w")
+    try:
+        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        raise SystemExit("Another bench/run.py is already running. "
+                         "Two runs on one server corrupt both results.")
+    return fh   # held until this process exits
 
 
 def cmd_cache(args):
@@ -84,28 +108,32 @@ def cmd_cache(args):
 
 def run_one(backend, scenario: str, args) -> None:
     records = harness.load_context(args.satellite)
+    meta    = harness.prompt_meta(args.satellite)
     if args.n:
-        records = records[:args.n]
+        records = harness.take(records, args.n)
 
     print(f"\n[{backend.name}] {scenario}  model={backend.model}")
     health = backend.health()
     if health != "up":
         raise SystemExit(f"    {backend.name} is not answering: {health}")
 
+    before = backends.VLLM.metrics() if backend.name == "vllm" else {}
     start = time.perf_counter()
     suffix = ""
 
     if scenario == "latency":
-        body = harness.scenario_latency(backend, records, args.max_tokens)
+        body = harness.scenario_latency(backend, records, args.max_tokens,
+                                        meta)
     elif scenario == "throughput":
         body = harness.scenario_throughput(backend, records, args.max_tokens,
-                                           args.concurrency)
+                                           args.concurrency, meta)
     elif scenario == "determinism":
         body = harness.scenario_determinism(
             backend, records[:args.determinism_questions],
-            args.max_tokens, args.repeats)
+            args.max_tokens, args.repeats, meta)
     elif scenario == "quality":
-        body = harness.scenario_quality(backend, records, args.max_tokens)
+        body = harness.scenario_quality(backend, records, args.max_tokens,
+                                        meta)
     elif scenario == "structured":
         chunks = harness.load_chunks(args.satellite, args.structured_chunks)
         body   = harness.scenario_structured(backend, chunks, args.arm,
@@ -115,22 +143,31 @@ def run_one(backend, scenario: str, args) -> None:
         raise SystemExit(f"unknown scenario {scenario!r}")
 
     elapsed = time.perf_counter() - start
+    if backend.name == "vllm":
+        after = backends.VLLM.metrics()
+        body["prefix_cache_hit_rate"] = backends.prefix_hit_rate(before, after)
+        body["server_metrics_seen"] = bool(after)
+    if scenario != "structured":
+        body["prompt"] = meta.get("name", "cache")
     save(backend.name, args.profile, scenario,
          envelope(backend, args.profile, scenario, body, elapsed), suffix)
 
 
 def cmd_run(args):
+    _lock = single_instance()
     backend = backends.build(args.backend, args.profile, args.num_ctx)
     run_one(backend, args.scenario, args)
 
 
 def cmd_all(args):
+    _lock = single_instance()
     backend = backends.build(args.backend, args.profile, args.num_ctx)
     for scenario in SCENARIOS:
         if scenario == "structured":
-            # Three arms, because the question is not only whether vLLM is
-            # better but whether Ollama given a schema is already enough.
-            arms = (["json-string", "schema"] if args.backend == "ollama"
+            # "builder" is what lora/build_dataset.py does today, parsed
+            # with its own rescue branches; "schema" is the fix. Running
+            # both on Ollama answers whether vLLM is needed for the fix.
+            arms = (["builder", "schema"] if args.backend == "ollama"
                     else ["schema"])
             for arm in arms:
                 args.arm = arm
@@ -158,7 +195,7 @@ def main():
     common.add_argument("--determinism-questions", type=int, default=10)
     common.add_argument("--structured-chunks", type=int, default=50)
     common.add_argument("--arm", default="schema",
-                        choices=["json-string", "schema", "none"])
+                        choices=["builder", "json-string", "schema", "none"])
     common.add_argument("--force", action="store_true")
 
     ap = argparse.ArgumentParser(

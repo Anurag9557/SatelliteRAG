@@ -1,0 +1,36 @@
+# Ollama vs vLLM
+
+- Profile: gpu-7b-fp16 (7B, same weights, fp16 on both, fully on a 48 GB card (shared box))
+- Machine: NVIDIA RTX PRO 5000 Blackwell, 48935 MiB, 595.99.02 | Linux-7.0.0-38-generic-x86_64-with-glibc2.39
+- Model (ollama): qwen2.5:7b-instruct-fp16
+- Model (ollama-tuned): qwen2.5:7b-instruct-fp16
+- Model (vllm): Qwen/Qwen2.5-7B-Instruct
+- Sampling (both, sent explicitly): {"repetition_penalty": 1.0, "sent_explicitly_to_both": true, "temperature": 0.0}
+
+| Metric | Ollama (default) | Ollama (`NUM_PARALLEL=4`) | vLLM | Verdict |
+| --- | ---: | ---: | ---: | --- |
+| Single-query TTFT, median (s) | 0.105 | not run | 0.084 | 20% to vLLM |
+| Single-query TTFT, p95 (s) | 0.262 | not run | 0.142 | 46% to vLLM |
+| Single-query total, median (s) | 1.501 | not run | 1.471 | 2% to vLLM |
+| Decode rate, median (tok/s) | 79.605 | not run | 79.965 | level |
+| Seconds per 100 output tokens, median | 1.357 | not run | 1.335 | 2% to vLLM |
+| Output tokens per answer, median | 109 | not run | 109 |  |
+| Prefix-cache hit rate, latency run | not run | not run | 0.295 |  |
+| Batch wall clock (s) | 197.45 | 80.5 | 34.36 | 57% to vLLM |
+| Batch throughput (req/s) | 0.517 | 1.267 | 2.968 | 134% to vLLM |
+| Batch throughput (tok/s) | 76.3 | 190.6 | 422.9 | 122% to vLLM |
+| Fully reproducible answers | 1 | not run | 0.8 | 20% to Ollama |
+| Answers carrying a citation | 0.48 | not run | 0.5 | 4% to vLLM |
+| Correct refusals (out-of-scope) | 2/2 | not run | 2/2 |  |
+| False refusals (answerable) | 20/100 | not run | 20/100 |  |
+| Real answers ending in the not-found line | 9/100 | not run | 9/100 |  |
+| Median answer length (chars) | 439 | not run | 414 |  |
+| Answers that hit the token cap | 3/102 | not run | 2/102 |  |
+
+Verdict compares vLLM against Ollama's better arm, so the batching figure is measured against Ollama with parallelism enabled rather than against its shipped default.
+
+
+The client kept 8 requests in flight. Ollama's tuned arm had 4 parallel slots, so it served 4 at a time while vLLM batched all 8. The batch verdict is therefore against Ollama at 4 slots. bench/README.md has the paired runs against Ollama at 8 slots, its better setting.
+
+
+Medians and p95, not means. Retrieval ran once and the same cached passages were replayed to both backends, so these numbers describe generation only.

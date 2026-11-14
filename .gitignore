@@ -82,3 +82,37 @@ runs/
 
 bench/cache/
 bench/results/*.json
+
+
+# Every other benchmark run follows the same rule as bench/results/:
+# the per-run JSONs and logs carry generated answers and machine names,
+# the comparison tables are numbers only.
+bench/results-*/*
+!bench/results-*/comparison.csv
+!bench/results-*/comparison.md
+!bench/results-*/*__comparison.csv
+!bench/results-*/*__comparison.md
+!bench/results-gpu-paired/paired.csv
+!bench/results-gpu-paired/README.md
+
+# Runs that were thrown away, and scratch checks
+bench/archive/
+bench/_audit/
+
+# Scripts for the lab machine carry its account and folder names.
+bench/gpu/
+
+# WSL setup left a trail of one-off scripts. The ones worth keeping:
+bench/wsl/*
+!bench/wsl/setup_uv.sh
+!bench/wsl/smoke.sh
+!bench/wsl/clean_rerun.sh
+!bench/wsl/lora_pipeline.sh
+
+# ---------------------------------------------------------------------
+# LoRA serving comparison and demo transcripts: generated answers again
+# ---------------------------------------------------------------------
+
+lora/serve_results/
+lora/*.pair-split.json
+Satellite_RAG_demo_terminal_txt.txt

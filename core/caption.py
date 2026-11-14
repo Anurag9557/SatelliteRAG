@@ -6,7 +6,11 @@ model, and the description is stored as a searchable chunk. That is what
 makes a request like "show me the recovery flow diagram" reach an image:
 the diagram itself is not searchable, its description is.
 
-Runs against Ollama on localhost, so nothing leaves the machine.
+Runs against a local model through core/llm.py (Ollama by default), so
+nothing leaves the machine. SATRAG_LLM_CONCURRENCY keeps several figures in
+flight at once; it only helps if the server overlaps requests (Ollama with
+OLLAMA_NUM_PARALLEL above 1, or vLLM), and a vision model on a 6 GB card
+may not have room for more than one, so the default stays 1.
 
 Captions are written to extracted/image_captions.json, and progress to
 extracted/.captioning_state.json, so an interrupted run resumes instead
@@ -19,11 +23,9 @@ import json
 import re
 from pathlib import Path
 
-try:
-    import ollama
-    HAS_OLLAMA = True
-except ImportError:
-    HAS_OLLAMA = False
+from concurrent.futures import ThreadPoolExecutor
+
+from . import llm
 
 # Pillow is optional. With it, figures are checked by pixel dimensions as
 # well as file size and normalised to PNG, which avoids progressive JPEG
@@ -80,8 +82,12 @@ Requirements:
 - Write the caption only. Do not begin with "Caption:", "The image
   shows" or "This figure". Start directly with the content."""
 
-# The model sometimes ignores the instruction above.
+# The model sometimes ignores the instruction above. The 3B vision model
+# usually does, and wraps the label in markdown bold: 70 of 100 benchmark
+# captions began "**Caption:**", which the plain patterns below miss. That
+# label would otherwise be embedded into every caption chunk.
 PREFIXES = [
+    r'^\*\*\s*(Image\s+)?Caption\s*:?\s*\*\*\s*:?\s*',
     r'^Image\s+Caption\s*:?\s*', r'^Caption\s*:?\s*',
     r'^Figure\s+\d+\s*[.:]\s*',  r'^Fig\.?\s*\d+\s*[.:]\s*',
     r'^(This|The)\s+(image|figure|diagram)\s+(shows|is|depicts)\s+',
@@ -225,13 +231,28 @@ def encode_image(path: Path) -> str:
 
 
 def describe(path: Path, context: str, model: str) -> str:
-    reply = ollama.generate(
-        model   = model,
-        prompt  = PROMPT.format(context=context),
-        images  = [encode_image(path)],
-        options = {"num_ctx": NUM_CTX, "temperature": 0.2},
+    # Temperature stays at the 0.2 captions were always made with; the seed
+    # and repetition penalty are pinned in core/llm.py, so a re-caption of
+    # the same figure gives the same text.
+    text = llm.chat(
+        [{"role": "user", "content": PROMPT.format(context=context)}],
+        model       = model,
+        images      = [encode_image(path)],
+        num_ctx     = NUM_CTX,
+        temperature = 0.2,
+        max_tokens  = 400,
     )
-    return clean(reply.get("response", ""))
+    return clean(text)
+
+
+def _describe_safely(job):
+    """For the worker pool: hand back the exception instead of raising it,
+    so the loop below can tell a skipped figure from a failed one."""
+    path, context, model = job
+    try:
+        return describe(path, context, model), None
+    except Exception as exc:
+        return "", exc
 
 
 def caption(satellite, model: str = DEFAULT_MODEL, force: bool = False,
@@ -239,19 +260,15 @@ def caption(satellite, model: str = DEFAULT_MODEL, force: bool = False,
     """Describe every figure this satellite has that is not done yet."""
     print(f"\n[{satellite.slug}] caption")
 
-    if not HAS_OLLAMA:
-        print(f"    ollama package missing: pip install ollama")
-        return {"satellite": satellite.slug, "status": "no-ollama"}
-
     if not satellite.images_dir.exists():
         print(f"    no images at {satellite.images_dir}, run extract first")
         return {"satellite": satellite.slug, "status": "no-images"}
 
-    try:
-        ollama.list()
-    except Exception as exc:
-        print(f"    cannot reach Ollama: {exc}")
-        print(f"    start it, then: ollama pull {model}")
+    ok, why = llm.available()
+    if not ok:
+        print(f"    {why}")
+        if llm.BACKEND == "ollama":
+            print(f"    start it, then: ollama pull {model}")
         return {"satellite": satellite.slug, "status": "ollama-unreachable"}
 
     images = sorted(p for p in satellite.images_dir.iterdir()
@@ -273,13 +290,34 @@ def caption(satellite, model: str = DEFAULT_MODEL, force: bool = False,
     if limit:
         todo = todo[:limit]
 
-    done, failed, skipped = 0, 0, 0
-    for i, path in enumerate(todo, start=1):
+    # Work out each figure's context first, then describe them in windows
+    # of CONCURRENCY, so state is still saved every few figures and an
+    # interrupted run loses at most one window. With the default of 1 this
+    # is the same one-at-a-time loop as before.
+    jobs = []
+    for path in todo:
         doc_type, page = parse_filename(path.name)
         chunk          = nearest_chunk(pages, doc_type, page)
-        context        = page_context(chunk)
+        jobs.append((path, doc_type, page, chunk, page_context(chunk)))
+
+    width = max(1, llm.CONCURRENCY)
+    replies = []
+    pool = ThreadPoolExecutor(max_workers=width) if width > 1 else None
+
+    def window_replies(start):
+        batch = [(p, ctx, model) for p, _, _, _, ctx in jobs[start:start + width]]
+        if pool is None:
+            return [_describe_safely(b) for b in batch]
+        return list(pool.map(_describe_safely, batch))
+
+    done, failed, skipped = 0, 0, 0
+    for i, (path, doc_type, page, chunk, context) in enumerate(jobs, start=1):
+        if (i - 1) % width == 0:
+            replies = window_replies(i - 1)
+        text, err = replies[(i - 1) % width]
         try:
-            text = describe(path, context, model)
+            if err is not None:
+                raise err
             if not text:
                 raise ValueError("empty response")
             # Inherit the document's own metadata rather than guessing it
@@ -311,6 +349,8 @@ def caption(satellite, model: str = DEFAULT_MODEL, force: bool = False,
         if done and done % 10 == 0:
             save_state(satellite, state)
 
+    if pool is not None:
+        pool.shutdown()
     save_state(satellite, state)
 
     captions = []

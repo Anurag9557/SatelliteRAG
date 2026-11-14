@@ -1,0 +1,13 @@
+series,round,arm,tokens_per_s,card_utilisation_before_pct
+slots,1,ollama-4-slots,54.0,99
+slots,1,ollama-8-slots,79.4,100
+slots,2,ollama-4-slots,55.0,100
+slots,2,ollama-8-slots,78.5,99
+slots,3,ollama-4-slots,52.7,99
+slots,3,ollama-8-slots,83.2,100
+runtime,1,ollama-8-slots,79.0,94
+runtime,1,vllm,160.2,100
+runtime,2,ollama-8-slots,77.1,100
+runtime,2,vllm,161.0,99
+runtime,3,ollama-8-slots,76.9,100
+runtime,3,vllm,160.7,100

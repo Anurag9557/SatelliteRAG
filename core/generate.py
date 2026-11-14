@@ -2,7 +2,9 @@
 Answer generation.
 
 Retrieval finds the passages; this turns them into a written answer with
-citations, using a local Ollama text model. Nothing leaves the machine.
+citations, using a local text model. Nothing leaves the machine. The model
+is reached through core/llm.py, so it is Ollama by default and a local
+vLLM server with SATRAG_LLM=vllm.
 
 The text model is deliberately not the vision model used for captioning.
 qwen2.5vl can answer from text, but it lists procedure steps poorly and
@@ -15,23 +17,56 @@ tends to reply that it cannot, even though the figure was retrieved and
 is about to be displayed.
 """
 
-try:
-    import ollama
-    HAS_OLLAMA = True
-except ImportError:
-    HAS_OLLAMA = False
-
-from . import retrieve, router
+from . import grounding, llm, retrieve, router
 
 DEFAULT_MODEL = "qwen2.5:7b-instruct"
 NUM_CTX       = 8192
+
+# A cap on the answer, which there was not before. Greedy decoding with no
+# repetition penalty occasionally loops on a numbered procedure (14 of 100
+# benchmark answers ran to a 512-token cap that way), and without a cap a
+# loop runs until the context window is full.
+MAX_TOKENS    = 768
 
 # The literal refusal the model is instructed to give when nothing in the
 # retrieved context answers the query. cli.py matches on this to avoid
 # printing a "Sources:" list under an answer that cites none of them.
 NOT_FOUND_MESSAGE = "Not found in available documents."
 
+# Version 6, 31 October. The procedure document holds steps for only 6
+# procedures; the other ~220 were not released and exist as one index line
+# each. So for most procedure questions the right answer is "this FCP, and
+# its steps are not in the documents". The original prompt (v1, below)
+# often refused instead, or wrote steps and command IDs found in no
+# passage. Prompts that asked the model to tell a step table from an index
+# line (v2 to v5, kept in bench/prompts/) either refused answerable
+# questions or said a table that was there was not. So the code decides:
+# core/grounding.context_note() reads which FCPs have step tables in the
+# passages and says so after the question, and the prompt is v1 plus one
+# rule. Results: bench/results-prompt-gpu/ (7B fp16, lab GPU).
+PROMPT_VERSION = "v6-context-note"
+
 SYSTEM_PROMPT = f"""You are a spacecraft operations assistant for mission control.
+Answer using ONLY the provided context from official mission documents.
+
+Rules:
+- For procedures: cite the FCP number and list the steps explicitly,
+  including command mnemonics and CID codes exactly as written.
+- Copy every command mnemonic, CID code and value from the context.
+  If you cannot copy it from the context, leave it out.
+- For figures: name the source document and page or section.
+- You may combine multiple facts from the context to answer a question
+  (comparisons, differences, summaries, lists, counts, etc.), as long as
+  every fact used is individually stated somewhere in the context.
+  Combining grounded facts is not guessing.
+- Only say "{NOT_FOUND_MESSAGE}" for the specific part of the question
+  the context genuinely does not address, not for a question the
+  context answers once its stated facts are combined.
+- Never speculate about spacecraft operations beyond what the documents
+  state.
+- Keep answers concise and operationally precise."""
+
+SYSTEM_PROMPT_V1 = f"""You are a spacecraft operations assistant for mission control.
 Answer using ONLY the provided context from official mission documents.
 
 Rules:
@@ -81,24 +116,25 @@ def generate(query: str, hits: list, model: str = DEFAULT_MODEL,
         if reply:
             return reply
 
-    if not HAS_OLLAMA:
-        return ("[Generation unavailable] ollama package not installed. "
-                "Run: pip install ollama\n"
-                "The retrieved sources are listed below.")
-
     context = retrieve.build_context(hits, show_satellite=show_satellite)
+    user = f"Context:\n{context}\n\nQuestion: {query}"
+    note = grounding.context_note(context)
+    if note:
+        user += f"\n\n{note}"
 
     try:
-        reply = ollama.chat(
-            model    = model,
-            messages = [
+        reply = llm.chat(
+            [
                 {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user",
-                 "content": f"Context:\n{context}\n\nQuestion: {query}"},
+                {"role": "user", "content": user},
             ],
-            options  = {"num_ctx": NUM_CTX},
+            model      = model,
+            num_ctx    = NUM_CTX,
+            max_tokens = MAX_TOKENS,
         )
-        return reply["message"]["content"].strip()
+        # No identifier the passages do not contain reaches the reader.
+        reply, _removed = grounding.guard(reply, context)
+        return reply
     except Exception as exc:
         # A transient Ollama or GPU error should not lose the retrieval.
         return (f"[Generation unavailable: {type(exc).__name__}] "

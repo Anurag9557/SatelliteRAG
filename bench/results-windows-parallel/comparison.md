@@ -1,0 +1,29 @@
+# Ollama vs vLLM
+
+- Profile: matched-fp16 (same weights, same precision, both fit in 6 GB)
+- Machine: NVIDIA GeForce RTX 3050 6GB Laptop GPU, 6144 MiB, 581.86 | Windows-10-10.0.26200-SP0
+- Model (ollama): qwen2.5:1.5b-instruct-fp16
+
+| Metric | Ollama | vLLM | Verdict |
+| --- | ---: | ---: | --- |
+| Single-query TTFT, median (s) | 2.409 | not run |  |
+| Single-query TTFT, p95 (s) | 2.761 | not run |  |
+| Single-query total, median (s) | 5.399 | not run |  |
+| Decode rate, median (tok/s) | 45.395 | not run |  |
+| Batch wall clock (s) | 443.15 | not run |  |
+| Batch throughput (req/s) | 0.23 | not run |  |
+| Batch throughput (tok/s) | 43.7 | not run |  |
+| Fully reproducible answers | 1 | not run |  |
+| Answers carrying a citation | 0.37 | not run |  |
+| Correct refusals (out-of-scope) | 2/2 | not run |  |
+| False refusals (answerable) | 9/100 | not run |  |
+| Median answer length (chars) | 545 | not run |  |
+
+## Structured output
+
+| Arm | Parsed | Correct shape | Pairs | s/chunk |
+| --- | ---: | ---: | ---: | ---: |
+| ollama / format=json-string | 0.96 | 0 | 0 | 2.695 |
+| ollama / format=schema | 1 | 1 | 100 | 4.897 |
+
+Medians and p95, not means. Retrieval ran once and the same cached passages were replayed to both backends, so these numbers describe generation only.
