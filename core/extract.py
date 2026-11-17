@@ -19,6 +19,7 @@ returning nothing, because silently producing zero chunks is far worse
 than producing rough ones.
 """
 
+import bisect
 import json
 import re
 import shutil
@@ -32,6 +33,7 @@ except ImportError:
 
 try:
     from docx import Document as DocxDocument
+    from docx.text.paragraph import Paragraph
 except ImportError:
     raise SystemExit("Missing dependency: pip install python-docx")
 
@@ -189,6 +191,8 @@ def convert_vector_image(path: Path) -> Path:
 
 
 def save_images_from_page(doc, page, page_num, doc_type, images_dir) -> int:
+    if images_dir is None:
+        return 0
     saved = 0
     for idx, info in enumerate(page.get_images(full=True)):
         try:
@@ -431,6 +435,14 @@ def extract_docx(path: Path, doc_type: str, images_dir: Path) -> list:
             f"{doc_type}_table_{t_idx:03d}", "\n".join(rows), doc_type,
             path.name, "section", heading=f"Table {t_idx + 1}"))
 
+    saved = save_docx_images(document, doc_type, images_dir)
+    print(f"      {len(chunks)} sections, {saved} images")
+    return chunks
+
+
+def save_docx_images(document, doc_type: str, images_dir) -> int:
+    if images_dir is None:
+        return 0
     saved = 0
     for rel in document.part.rels.values():
         if "image" not in rel.target_ref:
@@ -443,13 +455,11 @@ def extract_docx(path: Path, doc_type: str, images_dir: Path) -> list:
             saved += 1
         except Exception:
             continue
-
-    print(f"      {len(chunks)} sections, {saved} images")
-    return chunks
+    return saved
 
 
 def extract_doc(path: Path, doc_type: str, images_dir: Path,
-                work_dir: Path) -> list:
+                work_dir: Path, reader=None) -> list:
     """Legacy .doc: convert with LibreOffice, then read as .docx."""
     converted = work_dir / (path.stem + "_converted.docx")
 
@@ -470,7 +480,7 @@ def extract_doc(path: Path, doc_type: str, images_dir: Path,
             return []
         produced.rename(converted)
 
-    return extract_docx(converted, doc_type, images_dir)
+    return (reader or extract_docx)(converted, doc_type, images_dir)
 
 
 # Telecommand log
@@ -569,11 +579,205 @@ def extract_tch(path: Path, doc_type: str) -> list:
     return records
 
 
+# Where each figure sits
+#
+# Captioning describes a figure with the help of the text around it, and
+# the caption then carries the heading of the section the figure is in. So
+# something has to say where the figure is. The image file's name gives a
+# page at best, and for a Word file not even that. This reads it off the
+# document: the figure's rectangle on its PDF page, or the paragraph that
+# holds it in the Word body.
+
+FIGURES_FILE = "figures.json"
+NEAR_CHARS   = 700
+
+R_NS = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
+W_P  = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}p"
+
+
+def _key(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", text.lower())
+
+
+def _near(parts: list) -> str:
+    lines = [re.sub(r"\s+", " ", p).strip() for p in parts]
+    return "\n".join(l for l in lines if l)[:NEAR_CHARS]
+
+
+def _heading_top(page, blocks: list, heading: str):
+    """How far down the page a heading is printed, or None if not found."""
+    head = _key(heading)
+    if not head:
+        return None
+    for b in blocks:
+        t = _key(b[4])
+        if t == head or t.startswith(head) or (len(t) >= 8 and head.startswith(t)):
+            return b[1]
+    # The number and the title are sometimes separate blocks; a search of
+    # the page for the wording finds those.
+    found = page.search_for(heading.strip()[:80])
+    return found[0].y0 if found else None
+
+
+def locate_pdf_figures(path: Path, doc_type: str, chunks: list) -> dict:
+    """
+    {image name: {"page", "chunk_id", "near"}} for every image in a PDF.
+
+    near is the text directly above and below the figure on its own page,
+    which is where a document puts the figure's title and the sentence
+    that refers to it. Running headers and footers are left out.
+
+    chunk_id is the section the figure is in. A section that starts on the
+    figure's page counts only if its heading is printed above the figure;
+    otherwise the figure belongs to the last section that began on an
+    earlier page. Taking the next section instead, which is what a search
+    for "the first section at or after this page" does, names the wrong
+    one whenever no section starts on the page.
+    """
+    sections = [c for c in chunks
+                if c.get("source_doc") == doc_type and c.get("page")]
+    sections.sort(key=lambda c: c["page"])
+    pages = [c["page"] for c in sections]
+
+    out = {}
+    doc = fitz.open(str(path))
+    for number, page in enumerate(doc, start=1):
+        images = page.get_images(full=True)
+        if not images:
+            continue
+        height = page.rect.height
+        blocks = [b for b in page.get_text("blocks")
+                  if b[6] == 0 and b[4].strip()
+                  and b[3] > 0.10 * height and b[1] < 0.90 * height]
+
+        for idx, info in enumerate(images):
+            rects = page.get_image_rects(info[0])
+            if not rects:
+                continue
+            top, bottom = rects[0].y0, rects[0].y1
+            above = sorted((b for b in blocks if b[3] <= top + 2),
+                           key=lambda b: -b[3])
+            below = sorted((b for b in blocks if b[1] >= bottom - 2),
+                           key=lambda b: b[1])
+
+            chunk = None
+            for c in sections:
+                if c["page"] != number:
+                    continue
+                y = _heading_top(page, blocks, c.get("section_heading", ""))
+                if y is not None and y <= top + 2:
+                    chunk = c
+            if chunk is None and sections:
+                chunk = sections[max(bisect.bisect_left(pages, number) - 1, 0)]
+
+            out[f"{doc_type}_p{number}_img{idx}"] = {
+                "page":     number,
+                "chunk_id": chunk["chunk_id"] if chunk else "",
+                "near":     _near([b[4] for b in reversed(above[:3])]
+                                  + [b[4] for b in below[:3]]),
+            }
+    doc.close()
+    return out
+
+
+def locate_docx_figures(path: Path, doc_type: str, chunks: list) -> dict:
+    """
+    The same for a Word file: the heading a figure sits under and the
+    paragraphs either side of it. Image files were numbered in the order
+    save_docx_images met them, and that order is followed here to tell
+    which file is which picture.
+    """
+    document = DocxDocument(str(path))
+    names = {}
+    for rid, rel in document.part.rels.items():
+        if "image" in rel.target_ref:
+            names[rid] = f"{doc_type}_img{len(names):03d}"
+
+    paras = []
+    for el in document.element.body.iter(W_P):
+        para = Paragraph(el, document)
+        try:
+            style = (para.style.name or "") if para.style is not None else ""
+        except Exception:
+            style = ""
+        paras.append((el, para.text.strip(), style.startswith("Heading")))
+
+    sections = [c for c in chunks if c.get("source_doc") == doc_type]
+    out, heading = {}, "Preamble"
+    for i, (el, text, is_heading) in enumerate(paras):
+        if is_heading and text:
+            heading = text
+        held = {node.get(R_NS + key) for node in el.iter()
+                for key in ("embed", "id", "pict", "link")}
+        for rid, name in names.items():
+            if rid not in held or name in out:
+                continue
+            before = [t for _, t, h in paras[max(0, i - 6):i] if t and not h][-2:]
+            after  = [t for _, t, h in paras[i + 1:i + 7] if t and not h][:2]
+
+            # Headings repeat ("General", "Introduction"), so among the
+            # sections with this heading take the one holding the text
+            # just before the figure.
+            same  = [c for c in sections if c.get("section_heading") == heading]
+            probe = _key(before[-1])[:60] if before else ""
+            chunk = next((c for c in same if probe and probe in _key(c["text"])),
+                         same[0] if same else None)
+
+            out[name] = {
+                "page":     0,
+                "chunk_id": chunk["chunk_id"] if chunk else "",
+                "heading":  heading,
+                "near":     _near(before + [text] + after),
+            }
+    return out
+
+
+def locate_figures(satellite, chunks: list = None) -> dict:
+    """Place every figure and write extracted/figures.json."""
+    if chunks is None:
+        path = satellite.extracted_dir / "chunks.json"
+        chunks = json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
+
+    out = {}
+    for doc_type, entry in satellite.documents.items():
+        path = entry["path"]
+        if doc_type == "TCH" or not path.exists():
+            continue
+        try:
+            if path.suffix.lower() == ".pdf":
+                out.update(locate_pdf_figures(path, doc_type, chunks))
+            elif path.suffix.lower() == ".docx":
+                out.update(locate_docx_figures(path, doc_type, chunks))
+            elif path.suffix.lower() == ".doc":
+                converted = satellite.extracted_dir / (path.stem + "_converted.docx")
+                if converted.exists():
+                    out.update(locate_docx_figures(converted, doc_type, chunks))
+        except Exception as exc:
+            print(f"      could not place the figures of {entry['file']}: {exc}")
+
+    (satellite.extracted_dir / FIGURES_FILE).write_text(
+        json.dumps(out, indent=2, ensure_ascii=False), encoding="utf-8")
+    return out
+
+
 # Orchestration
 
-def extract(satellite, force: bool = False) -> dict:
-    """Read every document this satellite has and write the JSON."""
+def extract(satellite, force: bool = False, images: bool = True) -> dict:
+    """
+    Read every document this satellite has and write the JSON.
+
+    images=False skips saving the figures, for a second extraction of
+    documents whose figures are already on disk.
+    """
     print(f"\n[{satellite.slug}] extract")
+
+    # The readers that keep tables and heading paths live in core/layout.py
+    # and are used when the satellite asks for them. The procedure document
+    # and the telecommand log are read the same way in both modes.
+    structured = satellite.parsing_mode == "structure"
+    if structured:
+        from . import layout
+        print(f"    parsing mode: structure")
 
     documents = satellite.documents
     if not documents:
@@ -585,7 +789,9 @@ def extract(satellite, force: bool = False) -> dict:
         return {"satellite": satellite.slug, "status": "cached"}
 
     satellite.extracted_dir.mkdir(parents=True, exist_ok=True)
-    satellite.images_dir.mkdir(parents=True, exist_ok=True)
+    images_dir = satellite.images_dir if images else None
+    if images_dir is not None:
+        images_dir.mkdir(parents=True, exist_ok=True)
 
     chunks, commands = [], []
 
@@ -603,15 +809,20 @@ def extract(satellite, force: bool = False) -> dict:
             if doc_type == "TCH":
                 commands += extract_tch(path, doc_type)
             elif doc_type == "FCP" and path.suffix.lower() == ".pdf":
-                chunks += extract_fcp(path, doc_type, satellite.images_dir)
+                chunks += extract_fcp(path, doc_type, images_dir)
             elif path.suffix.lower() == ".pdf":
-                chunks += extract_prose_pdf(path, doc_type,
-                                            satellite.images_dir)
+                got = (layout.read_outline_pdf(path, doc_type, images_dir)
+                       if structured else None)
+                if got is None:      # flat mode, or a PDF with no bookmarks
+                    got = extract_prose_pdf(path, doc_type, images_dir)
+                chunks += got
             elif path.suffix.lower() == ".docx":
-                chunks += extract_docx(path, doc_type, satellite.images_dir)
+                read = layout.read_docx if structured else extract_docx
+                chunks += read(path, doc_type, images_dir)
             elif path.suffix.lower() == ".doc":
-                chunks += extract_doc(path, doc_type, satellite.images_dir,
-                                      satellite.extracted_dir)
+                read = layout.read_docx if structured else extract_docx
+                chunks += extract_doc(path, doc_type, images_dir,
+                                      satellite.extracted_dir, reader=read)
             else:
                 print(f"      unsupported format")
         except Exception as exc:
@@ -621,18 +832,21 @@ def extract(satellite, force: bool = False) -> dict:
         json.dumps(chunks, indent=2, ensure_ascii=False), encoding="utf-8")
     (satellite.extracted_dir / "tch_records.json").write_text(
         json.dumps(commands, indent=2, ensure_ascii=False), encoding="utf-8")
+    placed = locate_figures(satellite, chunks)
+    print(f"    {len(placed)} figures placed in their sections")
 
-    images = len(list(satellite.images_dir.glob("*")))
+    n_images = (len(list(satellite.images_dir.glob("*")))
+                if satellite.images_dir.exists() else 0)
     by_doc = {}
     for c in chunks:
         by_doc[c["source_doc"]] = by_doc.get(c["source_doc"], 0) + 1
 
     print(f"    {len(chunks)} chunks {by_doc}")
-    print(f"    {len(commands)} commands, {images} images")
+    print(f"    {len(commands)} commands, {n_images} images")
 
     return {
         "satellite": satellite.slug, "status": "ok",
-        "chunks": len(chunks), "commands": len(commands), "images": images,
+        "chunks": len(chunks), "commands": len(commands), "images": n_images,
     }
 
 

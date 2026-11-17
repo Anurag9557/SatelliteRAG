@@ -1,0 +1,17 @@
+scoring,setting,parsing,pool,hit@1,hit@3,hit@5,hit@10,recall,mrr,mrr_strict,right_in_top5,contents_in_top5,seconds,mrr_change,low,high
+as labelled,hybrid + reranker,flat,20,0.84,0.91,0.93,0.97,0.98,0.8837,0.8749,2.04,0.23,12.7,,,
+contents not counted,hybrid + reranker,flat,20,0.84,0.91,0.92,0.96,0.96,0.881,0.8719,1.87,0.23,12.7,,,
+as labelled,hybrid + reranker,structure,20,0.83,0.9,0.93,0.97,0.97,0.8729,0.8628,1.91,0.0,11.2,-0.0108,-0.0397,0.0187
+contents not counted,hybrid + reranker,structure,20,0.83,0.9,0.93,0.97,0.97,0.8729,0.8628,1.91,0.0,11.2,-0.0081,-0.0367,0.0214
+as labelled,hybrid,flat,20,0.77,0.93,0.95,0.97,0.98,0.8516,0.8389,1.73,0.16,3.5,,,
+contents not counted,hybrid,flat,20,0.74,0.92,0.95,0.96,0.96,0.8303,0.815,1.63,0.16,3.5,,,
+as labelled,hybrid,structure,20,0.77,0.86,0.93,0.96,0.97,0.8289,0.8133,1.61,0.0,3.5,-0.0228,-0.0646,0.0163
+contents not counted,hybrid,structure,20,0.77,0.86,0.93,0.96,0.97,0.8289,0.8133,1.61,0.0,3.5,-0.0015,-0.0485,0.044
+as labelled,dense,flat,20,0.71,0.85,0.87,0.96,0.96,0.7916,0.7715,1.6,0.12,1.1,,,
+contents not counted,dense,flat,20,0.7,0.85,0.87,0.96,0.96,0.785,0.764,1.53,0.12,1.1,,,
+as labelled,dense,structure,20,0.69,0.85,0.88,0.94,0.95,0.7775,0.7613,1.59,0.0,1.1,-0.0141,-0.0542,0.0263
+contents not counted,dense,structure,20,0.69,0.85,0.88,0.94,0.95,0.7775,0.7613,1.59,0.0,1.1,-0.0074,-0.0498,0.0341
+as labelled,bm25,flat,20,0.73,0.87,0.9,0.94,0.97,0.8045,0.8018,1.72,0.54,1.7,,,
+contents not counted,bm25,flat,20,0.58,0.79,0.86,0.91,0.95,0.6975,0.7014,1.42,0.54,1.7,,,
+as labelled,bm25,structure,20,0.64,0.76,0.83,0.91,0.96,0.7248,0.7223,1.4,0.0,1.5,-0.0796,-0.1304,-0.0345
+contents not counted,bm25,structure,20,0.64,0.76,0.83,0.91,0.96,0.7248,0.7223,1.4,0.0,1.5,0.0273,-0.0057,0.0639

@@ -60,6 +60,15 @@ MODELS = {"ollama": "", "vllm": ""}
 # shared, and the handler runs a thread per request.
 SEARCH_LOCK = threading.Lock()
 
+# Shown under an answer the app gives without a model.
+_SAME = "without a model, so there is nothing for the servers to differ on."
+WHY = {
+    "caption":  "A figure request is answered from the figure's caption, " + _SAME,
+    "commands": "A command-log lookup by date, command id or mnemonic is "
+                "answered in code from every matching record, " + _SAME,
+    "none":     "Nothing was retrieved, so the app says so " + _SAME,
+}
+
 
 # ------------------------------------------------------------ the servers
 
@@ -162,9 +171,14 @@ def answer(side: str, job: dict, on_text=None) -> dict:
 
     total = time.perf_counter() - start
     text  = "".join(parts)
-    # No identifier the passages do not hold reaches the reader, the same
-    # guard the app applies. The count shows how often it had to step in.
+    # The same steps the app runs after the model (core/generate.answer):
+    # no identifier the passages do not hold, no "steps not in the
+    # documents" under a procedure whose steps are there, and citations
+    # checked. The count shows how often the guard had to step in.
     text, removed = grounding.guard(text, job["context"])
+    text, _       = grounding.drop_false_no_steps(text, job["context"])
+    text, _       = generate.drop_trailing_not_found(text)
+    text, _       = generate.check_citations(text, job.get("n_sources", 5))
     tokens  = tokens or len(parts)
     writing = total - (first or 0)
     return {
@@ -187,9 +201,10 @@ def prepare(question: str) -> dict:
         hits  = retrieve.search([SAT], question, top_k=5, plan=plan)
         took  = time.perf_counter() - start
 
+    fixed, path = generate.answer_without_model(hits, plan, question)
     context = retrieve.build_context(hits)
     user = f"Context:\n{context}\n\nQuestion: {question}"
-    note = grounding.context_note(context)
+    note = grounding.context_note(context, related=generate.NOTE_RELATED)
     if note:
         user += f"\n\n{note}"
     return {
@@ -198,12 +213,15 @@ def prepare(question: str) -> dict:
         "messages": [{"role": "system", "content": generate.SYSTEM_PROMPT},
                      {"role": "user", "content": user}],
         "sources":  [h.cite() for h in hits],
+        "n_sources": len(hits),
         "route":    plan.describe(),
         "search_s": round(took, 2),
-        # A figure request is answered from its caption, not by a model,
-        # so there is nothing for the two servers to differ on.
-        "caption":  (generate.answer_from_caption(hits)
-                     if plan.intent == "figure" else ""),
+        # What the app answers in code: a figure from its caption, a
+        # command-log lookup from every matching record, and nothing
+        # found. No model is asked, so there is nothing for the two
+        # servers to differ on.
+        "fixed":    fixed,
+        "why":      WHY.get(path, ""),
     }
 
 
@@ -318,8 +336,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         job = prepare(question)
         self.emit("search", {k: job[k] for k in ("sources", "route", "search_s")})
-        if job["caption"]:
-            self.emit("caption", {"text": job["caption"]})
+        if job["fixed"]:
+            self.emit("caption", {"text": job["fixed"], "why": job["why"]})
             self.emit("end", {})
             return
 

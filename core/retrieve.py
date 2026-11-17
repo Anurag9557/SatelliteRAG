@@ -83,6 +83,7 @@ class Hit:
 
 _clients = {}
 _command_values = {}
+_procedures = {}
 
 
 def _collections(satellite):
@@ -235,6 +236,134 @@ def prepend(primary: list, extra: list, n: int = 2) -> list:
     return out
 
 
+# Procedures: ranked by title, answered with steps
+#
+# A procedure is in the store twice: as one line of the index ("FCP 5201 -
+# OBC - title") and, when the document holds it, as its steps. The two
+# were ranked like any other chunks, and that went wrong in one direction.
+# A body is a long table of step text and command codes. It scored well
+# for any question about its subsystem, so the bodies of two or three
+# procedures sat in the top five for most OBC questions and pushed out the
+# index row of the procedure that was actually asked for. The model then
+# answered from the wrong procedure.
+#
+# The fix is to make a procedure one candidate instead of two or four. Its
+# index row stands for it. When the reranker judges it, it reads the title
+# and the steps and the better of the two counts, so a procedure whose
+# title is worded unlike the question can still be found by its steps, and
+# one whose steps were never retrieved can still be found by its title.
+# Once the order is settled, the best-placed rows are swapped for the
+# steps they point to.
+
+# How many procedures bring their steps. Each can be several thousand
+# characters, and the model reads every passage it is given.
+STEPS_FOR = 2
+
+BODY_TYPES = ("procedure", "note")
+
+
+def _join_pieces(parts: list) -> str:
+    """Put a split body back together, dropping the overlap between pieces."""
+    out = parts[0]
+    for piece in parts[1:]:
+        shared = 0
+        for n in range(min(len(out), len(piece), 400), 20, -1):
+            if out.endswith(piece[:n]):
+                shared = n
+                break
+        out += piece[shared:] if shared else "\n" + piece
+    return out
+
+
+def _procedure_map(satellite, col_k) -> dict:
+    """
+    {"rows": {number: index row}, "bodies": {number: whole procedure}},
+    read from the store once. A body cut into pieces at ingest is joined
+    again here, so its steps reach the model as one passage in order.
+    """
+    # Keyed by the store, not the satellite: the comparison scripts point
+    # one satellite at several stores in a single run.
+    key = str(satellite.vectorstore_dir)
+    if key not in _procedures:
+        got = col_k.get(where={"doc_type": {"$eq": "FCP"}},
+                        include=["documents", "metadatas"])
+        rows, pieces = {}, {}
+        for cid, doc, meta in zip(got.get("ids") or [],
+                                  got.get("documents") or [],
+                                  got.get("metadatas") or []):
+            number = meta.get("fcp_number", "")
+            if not number:
+                continue
+            if meta.get("content_type") == "toc_index":
+                rows.setdefault(number, Hit(cid, doc or "", 0.0,
+                                            satellite.slug, meta))
+            elif meta.get("content_type") in BODY_TYPES:
+                pieces.setdefault(number, []).append((cid, doc or "", meta))
+
+        bodies = {}
+        for number, found in pieces.items():
+            found.sort(key=lambda t: (t[2].get("page", 0),
+                                      t[2].get("parent_chunk_id", ""),
+                                      t[2].get("sub_index", 0)))
+            cid, _, meta = found[0]
+            meta = {**meta, "is_sub_chunk": False, "sub_index": 0}
+            bodies[number] = Hit(meta.get("parent_chunk_id") or cid,
+                                 _join_pieces([doc for _, doc, _ in found]),
+                                 0.0, satellite.slug, meta)
+        _procedures[key] = {"rows": rows, "bodies": bodies}
+    return _procedures[key]
+
+
+def _is_body(hit) -> bool:
+    return hit.doc_type == "FCP" and hit.content_type in BODY_TYPES
+
+
+def rows_for_bodies(hits: list, procedures: dict) -> list:
+    """
+    Stand each procedure body's index row in for it, once per procedure.
+    A body with no index row is left as it is.
+    """
+    out, seen = [], set()
+    for hit in hits:
+        row = procedures["rows"].get(hit.metadata.get("fcp_number", ""))
+        if _is_body(hit) and row is not None:
+            hit = Hit(row.chunk_id, row.text, hit.score, row.satellite,
+                      row.metadata)
+        key = (hit.satellite, hit.chunk_id)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(hit)
+    return out
+
+
+def bodies_of(hits: list, procedures: dict) -> list:
+    """The steps behind each index row in hits, for the reranker to read."""
+    out = []
+    for hit in hits:
+        body = procedures["bodies"].get(hit.metadata.get("fcp_number", ""))
+        if hit.content_type == "toc_index" and body is not None:
+            out.append(Hit(body.chunk_id, body.text, hit.score,
+                           body.satellite, body.metadata))
+    return out
+
+
+def steps_for_rows(hits: list, procedures: dict, limit: int = STEPS_FOR) -> list:
+    """
+    Swap the best-placed index rows for the steps they point to, where the
+    store has them. One for one, so nothing else moves.
+    """
+    out, done = [], 0
+    for hit in hits:
+        body = procedures["bodies"].get(hit.metadata.get("fcp_number", ""))
+        if hit.content_type == "toc_index" and body is not None and done < limit:
+            hit = Hit(body.chunk_id, body.text, hit.score, body.satellite,
+                      body.metadata)
+            done += 1
+        out.append(hit)
+    return out
+
+
 def search_commands(satellite, query: str, plan, top_k: int,
                     mode: str = "hybrid") -> list:
     """
@@ -350,6 +479,10 @@ def search_one(satellite, query: str, top_k=None, doc_types=None,
             query, col_k, satellite, cfg["n_dense"], fcp_only))
     merged = rrf(lists, cfg["rrf_k"])
 
+    # From here on a procedure is its index row; see rows_for_bodies.
+    procedures = _procedure_map(satellite, col_k)
+    merged     = rows_for_bodies(merged, procedures)
+
     # Reranking reads each candidate against the question, which fusion
     # arithmetic cannot. On the 100-question bench it sharpens the first
     # position and can cost a place in the top five, so it is a setting
@@ -362,9 +495,13 @@ def search_one(satellite, query: str, top_k=None, doc_types=None,
     # then apply the rules that know what kind of passage was asked for.
     if cfg.get("rerank", True):
         pool   = merged[:cfg.get("rerank_pool", reranker.DEFAULT_POOL)]
+        # A procedure is read twice, as its title and as its steps, and
+        # keeps the better place of the two.
+        pool   = pool + bodies_of(pool, procedures)
         merged = reranker.rerank(query, pool, len(pool),
                                  model_name=cfg.get("rerank_model",
                                                     reranker.DEFAULT_MODEL))
+        merged = rows_for_bodies(merged, procedures)
 
     # A diagram request wants the figure itself at the front. Captions are
     # short, and a dense search alone missed some of them, so both passes
@@ -391,12 +528,19 @@ def search_one(satellite, query: str, top_k=None, doc_types=None,
     # them on fusion even for a near-exact title match.
     if (plan.intent in ("procedure", "which_procedure")
             and plan.router != "soft" and wants_fcp):
-        procs = dense_search(query, col_k, satellite, 3, fcp_only)
+        procs = rows_for_bodies(
+            dense_search(query, col_k, satellite, 3, fcp_only), procedures)
         merged = prepend(merged, procs, 2)
 
     if commands:
         merged = rrf([merged, commands], cfg["rrf_k"])
-    return merged[:top_k]
+    merged = merged[:top_k]
+
+    # "Which FCP covers X" is answered by the index line itself. Anything
+    # else that reaches a procedure wants its steps.
+    if plan.intent != "which_procedure":
+        merged = steps_for_rows(merged, procedures)
+    return merged
 
 
 def search(satellites: list, query: str, top_k: int = 5,
@@ -475,6 +619,12 @@ def format_hits(hits: list, show_satellite: bool = False,
     return "\n".join(lines)
 
 
+# A procedure is given whole. Cut at the ordinary budget it loses its last
+# steps and its notes, and a procedure that stops part-way is worse than
+# none: it reads as complete.
+PROCEDURE_BUDGET = 6000
+
+
 def build_context(hits: list, show_satellite: bool = False,
                   char_budget: int = 2000, total_budget: int = 16000) -> str:
     """
@@ -486,8 +636,9 @@ def build_context(hits: list, show_satellite: bool = False,
     """
     blocks, used = [], 0
     for i, h in enumerate(hits, 1):
+        budget = max(char_budget, PROCEDURE_BUDGET) if _is_body(h) else char_budget
         block = (f"[Source {i} | {h.cite(show_satellite)}]\n"
-                 f"{h.text.strip()[:char_budget]}")
+                 f"{h.text.strip()[:budget]}")
         if blocks and used + len(block) > total_budget:
             blocks.append(f"[{len(hits) - i + 1} further sources not shown]")
             break

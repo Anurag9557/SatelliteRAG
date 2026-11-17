@@ -47,10 +47,20 @@ def procedure_tables(context: str) -> list:
     return sorted(set(BODY_HEAD_RE.findall(context)))
 
 
-def context_note(context: str) -> str:
+def context_note(context: str, related: str = "") -> str:
     """
     One line, added after the question, saying which procedures the
     passages hold steps for.
+
+    related: what to say about a procedure that is only an index line,
+    beyond the fixed reply. Read on 17 November, 6 of 11 such replies were
+    the fixed line alone while the passages held the operation the
+    procedure carries out, or its commands in another document.
+        ""       the fixed reply only (v7 and before)
+        "any"    give what other passages say about it (v8). Tried and
+                 not kept: twice it gave another FCP's step table as the
+                 steps asked for.
+        "named"  the same, but never another FCP's table (v9)
 
     The documents released so far hold steps for 6 procedures; the other
     ~220 appear only as index rows. Whether a passage set holds a step
@@ -72,7 +82,75 @@ def context_note(context: str) -> str:
         parts.append(f"{lead} appear as index lines only. If the question asks "
                      "for the steps of one of those, reply with its index line "
                      f'followed by: "{NO_STEPS_LINE}" Do not write steps for it.')
+        if related == "any":
+            parts.append("Then, if other passages describe that procedure, the "
+                         "operation it carries out, or commands for it, give "
+                         "what they say, with their source numbers. If none "
+                         "does, stop after that sentence.")
+        elif related == "named":
+            others = f" (FCP {', '.join(tables)})" if tables else ""
+            parts.append("Then, if a passage that is not a procedure table names "
+                         "that FCP or describes the operation it carries out, "
+                         "give what that passage says, with its source number. "
+                         f"Never give the steps of a different FCP{others} for it. "
+                         "If no passage does, stop after that sentence.")
     return ("Note: " + " ".join(parts)) if parts else ""
+
+
+def fcp_numbers_named(text: str, context: str) -> list:
+    """
+    The FCP numbers text mentions, in order, counting only numbers that
+    are an FCP in the context (a step table or an index line). A year or a
+    value in the answer is then never taken for a procedure number, and
+    nothing depends on how a satellite numbers its procedures.
+    """
+    known = set(procedure_tables(context)) | set(INDEX_RE.findall(context))
+    return [n for n in re.findall(r"(?<!\d)(\d{4})(?!\d)", text) if n in known]
+
+
+def only_no_steps(text: str) -> bool:
+    """
+    The fixed reply and nothing more: the no-steps sentence, with at most
+    the procedure's index line before it. It states nothing to cite.
+    """
+    if not NO_STEPS_RE.search(text):
+        return False
+    rest = [ln for ln in NO_STEPS_RE.sub("\n", text).splitlines() if ln.strip()]
+    return len(rest) <= 1 and sum(len(ln) for ln in rest) < 160
+
+
+NO_STEPS_RE   = re.compile(r"[ \t]*" + re.escape(NO_STEPS_LINE)
+                           .replace(r"\ ", r"\s+") + r"[ \t]*\n?", re.I)
+
+
+def drop_false_no_steps(answer: str, context: str) -> tuple:
+    """
+    (answer, how many times the no-steps sentence was taken out).
+
+    context_note() tells the model to follow an index-only FCP with the
+    sentence saying its steps are not in the documents. Asked about one
+    procedure whose table is present and shown another that is only an
+    index line, the model sometimes lists the first one's steps and then
+    writes that sentence under them, without the other's index line. The
+    answer then contradicts itself.
+
+    Which FCPs have a table in the passages is a fact, so the sentence is
+    checked against it: it belongs to the nearest FCP number written before
+    it, and if that FCP's table is in the passages the sentence is wrong
+    and is removed. With no FCP number before it, it is left alone.
+    """
+    tables = set(procedure_tables(context))
+    if not tables:
+        return answer, 0
+    out, removed, last = [], 0, 0
+    for match in NO_STEPS_RE.finditer(answer):
+        named = fcp_numbers_named(answer[:match.start()], context)
+        if named and named[-1] in tables:
+            out.append(answer[last:match.start()])
+            last = match.end()
+            removed += 1
+    out.append(answer[last:])
+    return "".join(out), removed
 
 
 def _in_context(token: str, context_upper: str) -> bool:

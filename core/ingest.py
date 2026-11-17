@@ -92,8 +92,13 @@ def embed_text(item: dict) -> str:
         parts.append(f"Command: {item['mnemonic']}")
     if item.get("cid"):
         parts.append(f"CID: {item['cid']}")
-    if item.get("section_heading"):
-        parts.append(item["section_heading"])
+    # The chain of headings above the passage when the reader recorded it
+    # (core/layout.py), otherwise just the nearest one. "Battery" under
+    # "Power system" and "Battery" under "Thermal design" are different
+    # passages, and only the chain says which is which.
+    heading = item.get("heading_path") or item.get("section_heading")
+    if heading:
+        parts.append(heading)
 
     body = item.get("text", "").strip()
     if body:
@@ -112,6 +117,7 @@ def metadata_for(item: dict, satellite) -> dict:
         "content_type":    str(item.get("content_type", "")),
         "page":            int(item.get("page") or 0),
         "section_heading": str(item.get("section_heading", ""))[:400],
+        "heading_path":    str(item.get("heading_path", ""))[:400],
         "fcp_number":      str(item.get("fcp_number", "")),
         "subsystem":       str(item.get("subsystem", "")),
         "is_sub_chunk":    bool(item.get("is_sub_chunk", False)),

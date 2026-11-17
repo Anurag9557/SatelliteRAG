@@ -98,6 +98,157 @@ def split_atomic(text: str, max_chars: int, overlap: int) -> list:
     return [text]
 
 
+# Block-aware splitting, for sections read by core/layout.py.
+#
+# The splitters above see a section as a string and look for a good place
+# to cut near a character count. These see it as the document wrote it:
+# paragraphs and table rows. A cut falls between two of those. A table
+# that needs more than one chunk has its header row repeated on each, so
+# no chunk is a block of values with nothing to say what they are.
+
+SENTENCE_END = re.compile(r'(?<=[.!?;])\s+')
+
+# A short paragraph ending in a colon introduces whatever follows it. If
+# it would be the last thing in a chunk it goes to the next one instead.
+LEAD_IN_MAX = 200
+
+
+def _fit(text: str, max_chars: int, seps: list) -> list:
+    """
+    Cut text into pieces of at most max_chars, at the first separator in
+    seps that allows it. Only used on a single sentence or table row that
+    is longer than a whole chunk.
+    """
+    if len(text) <= max_chars:
+        return [text]
+    for sep in seps:
+        parts = [p for p in text.split(sep) if p.strip()]
+        if len(parts) < 2:
+            continue
+        out, cur = [], ""
+        for part in parts:
+            if cur and len(cur) + len(sep) + len(part) > max_chars:
+                out.append(cur)
+                cur = part
+            else:
+                cur = f"{cur}{sep}{part}" if cur else part
+        out.append(cur)
+        # A piece can still be too long; try the next, finer separator.
+        return [piece for o in out for piece in _fit(o, max_chars, seps)]
+    return [text[i:i + max_chars] for i in range(0, len(text), max_chars)]
+
+
+def _units(blocks: list, max_chars: int) -> list:
+    """
+    The pieces a cut may fall between, in order: whole paragraphs and
+    table rows. A paragraph longer than a chunk is the one thing that has
+    to be cut inside, and it is cut between its sentences.
+
+    glue is what joins a unit to the one before it when both land in the
+    same chunk: a newline, or a space between sentences of one paragraph.
+    """
+    units = []
+    for n, block in enumerate(blocks):
+        if block["kind"] == "table":
+            for row in block["rows"]:
+                for piece in _fit(row, max_chars, [" | ", " "]):
+                    units.append({"text": piece, "glue": "\n",
+                                  "table": n, "para": None})
+            continue
+
+        text = block["text"].strip()
+        if not text:
+            continue
+        if len(text) <= max_chars:
+            units.append({"text": text, "glue": "\n",
+                          "table": None, "para": None})
+            continue
+        for line in text.split("\n"):
+            glue = "\n"
+            for sentence in SENTENCE_END.split(line):
+                for piece in _fit(sentence.strip(), max_chars, [" "]):
+                    if piece:
+                        units.append({"text": piece, "glue": glue,
+                                      "table": None, "para": n})
+                        glue = " "
+    return units
+
+
+def _join(entries: list) -> str:
+    out = ""
+    for glue, text in entries:
+        out = out + glue + text if out else text
+    return out
+
+
+def split_blocks(blocks: list, max_chars: int, overlap: int) -> list:
+    """Pack paragraphs and table rows into chunks of about max_chars."""
+    pieces  = []
+    current = []            # (unit, the (glue, text) entries it added)
+    size    = 0
+    started = set()         # tables already begun in an earlier chunk
+    shown   = set()         # tables whose header is in the current chunk
+
+    def entries_for(unit) -> list:
+        """The unit, behind its table's title and header if this chunk
+        has not shown them yet."""
+        n = unit["table"]
+        if n is None or n in shown:
+            return [(unit["glue"], unit["text"])]
+        block = blocks[n]
+        title = block.get("title", "")
+        if n in started and title:
+            title += " (continued)"
+        head = [("\n", x) for x in (title, block["header"]) if x]
+        return head + [("\n", unit["text"])]
+
+    def add(unit) -> None:
+        nonlocal size
+        entries = entries_for(unit)
+        if unit["table"] is not None:
+            shown.add(unit["table"])
+            started.add(unit["table"])
+        current.append((unit, entries))
+        size += sum(len(text) + 1 for _, text in entries)
+
+    def close() -> tuple:
+        """
+        End the current chunk. Returns (move, repeat): a lead-in line that
+        was held back for the next chunk, or a sentence to say again there.
+        """
+        nonlocal current, size
+        move = repeat = None
+        last = current[-1][0]
+        if (len(current) > 1 and last["table"] is None
+                and len(last["text"]) <= LEAD_IN_MAX
+                and last["text"].rstrip().endswith(":")):
+            current.pop()
+            move = last
+        elif last["para"] is not None and len(last["text"]) <= overlap:
+            repeat = last
+        pieces.append(_join([e for _, entries in current for e in entries]))
+        current, size = [], 0
+        shown.clear()
+        return move, repeat
+
+    for unit in _units(blocks, max_chars):
+        need = sum(len(text) + 1 for _, text in entries_for(unit))
+        if current and size + need > max_chars:
+            move, repeat = close()
+            if move:
+                add(move)
+            elif repeat and repeat["para"] == unit["para"]:
+                # The cut fell inside one long paragraph, so its last
+                # sentence opens the next chunk as well. Between whole
+                # paragraphs nothing is repeated.
+                add(repeat)
+        add(unit)
+    if current:
+        pieces.append(_join([e for _, entries in current for e in entries]))
+
+    return [p for p in pieces if p.strip()]
+
+
 STRATEGY_BY_DOC_TYPE = {
     "FCP":        split_fcp,
     "MOR":        split_prose,
@@ -157,7 +308,16 @@ def apply(items: list, satellite, id_field: str = "chunk_id") -> tuple:
         overlap   = params.get("overlap", 200)
         splitter  = strategy_for(doc_type, content_type)
 
-        parts = splitter(text, max_chars, overlap)
+        # A section that came with its blocks is cut between them. The
+        # blocks have done their job once the section is split, and are
+        # not copied into every chunk.
+        blocks = item.get("blocks")
+        if blocks and splitter is not split_atomic:
+            parts = split_blocks(blocks, max_chars, overlap) or [text]
+        else:
+            parts = splitter(text, max_chars, overlap)
+        if blocks:
+            item = {k: v for k, v in item.items() if k != "blocks"}
 
         if len(parts) == 1:
             row = dict(item)

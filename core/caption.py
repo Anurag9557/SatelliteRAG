@@ -56,6 +56,10 @@ SUPPORTED = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
 
 CAPTIONS_FILE = "image_captions.json"
 STATE_FILE    = ".captioning_state.json"
+FIGURES_FILE  = "figures.json"
+
+# Less text than this beside a figure and the section's opening is added.
+THIN_CONTEXT = 200
 
 PROMPT = """You are a technical documentation analyst for a spacecraft mission.
 
@@ -111,15 +115,20 @@ def parse_filename(name: str) -> tuple:
     return m.group(1).upper(), int(m.group(2) or 0)
 
 
-def page_context(chunk, limit: int = 700) -> str:
+def page_context(chunk, near: str = "", limit: int = 700) -> str:
     """
     Context handed to the vision model: what the document says around the
     figure. A plot with unlabelled axes is described far better when the
     surrounding prose says what is being plotted, and the section heading
     and procedure number let the model name the right subsystem.
+
+    near is the text printed right beside the figure, when extraction
+    could place it. Without it the opening of the section has to do, which
+    may be pages away from the figure.
     """
-    if not chunk:
+    if not chunk and not near:
         return "(no surrounding context available)"
+    chunk = chunk or {}
 
     lines = []
     for label, key in (("Document ", "doc_filename"),
@@ -130,9 +139,15 @@ def page_context(chunk, limit: int = 700) -> str:
         if value and value != "UNKNOWN":
             lines.append(f"{label}: {value}")
 
-    body = re.sub(r'\s+', ' ', chunk.get("text", "")).strip()[:limit]
-    if body:
-        lines.append(f"\nText near the figure:\n{body}")
+    if near:
+        lines.append(f"\nText beside the figure:\n{near[:limit]}")
+    # A figure that fills its page has little or nothing beside it. The
+    # opening of its section then says what the section is about.
+    if len(near) < THIN_CONTEXT:
+        opening = re.sub(r'\s+', ' ', chunk.get("text", "")).strip()
+        if opening:
+            lines.append(f"\nOpening of the section it is in:\n"
+                         f"{opening[:limit - len(near)]}")
 
     return "\n".join(lines) if lines else "(no surrounding context available)"
 
@@ -160,23 +175,50 @@ def build_page_index(satellite) -> dict:
     return index
 
 
-def nearest_chunk(page_index: dict, doc_type: str, page: int):
+def containing_chunk(page_index: dict, doc_type: str, page: int):
     """
-    The chunk whose page is closest to this one.
+    The section a page falls in: the last one that starts on or before it.
 
-    An exact page match fails often: a figure frequently sits on a page
-    whose text went into a chunk starting a page or two earlier, and a
-    strict match then yields no context at all.
+    Used only for a figure that extraction could not place. This used to
+    take the first section starting on or after the page. When no section
+    starts on the page that is the following section, and 128 of the 181
+    Aditya-L1 report figures were described with the next section's
+    opening as their context and filed under its heading.
     """
     entries = page_index.get(doc_type)
-    if not entries:
+    if not entries or not page:
         return None
-    if not page:
-        return entries[0][1]
     pages = [p for p, _ in entries]
-    idx   = bisect.bisect_left(pages, page)
-    idx   = max(0, min(idx, len(entries) - 1))
-    return entries[idx][1]
+    return entries[max(bisect.bisect_right(pages, page) - 1, 0)][1]
+
+
+def load_figures(satellite) -> dict:
+    """
+    Where each figure sits, from extracted/figures.json. An extraction made
+    before that file existed has none, so it is worked out here once.
+    """
+    path = satellite.extracted_dir / FIGURES_FILE
+    if path.exists():
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    try:
+        from . import extract
+        return extract.locate_figures(satellite)
+    except Exception as exc:
+        print(f"    figures could not be placed ({type(exc).__name__}); "
+              f"falling back to the page number")
+        return {}
+
+
+def place(name: str, figures: dict, by_id: dict, page_index: dict) -> tuple:
+    """(the section this figure is in, the text printed beside it)."""
+    entry = figures.get(Path(name).stem)
+    if entry:
+        return by_id.get(entry.get("chunk_id", "")), entry.get("near", "")
+    doc_type, page = parse_filename(name)
+    return containing_chunk(page_index, doc_type, page), ""
 
 
 def load_state(satellite) -> dict:
@@ -264,21 +306,20 @@ def caption(satellite, model: str = DEFAULT_MODEL, force: bool = False,
         print(f"    no images at {satellite.images_dir}, run extract first")
         return {"satellite": satellite.slug, "status": "no-images"}
 
-    ok, why = llm.available()
-    if not ok:
-        print(f"    {why}")
-        if llm.BACKEND == "ollama":
-            print(f"    start it, then: ollama pull {model}")
-        return {"satellite": satellite.slug, "status": "ollama-unreachable"}
-
     images = sorted(p for p in satellite.images_dir.iterdir()
                     if p.is_file() and p.suffix.lower() in SUPPORTED)
     if not images:
         print(f"    no usable images found")
         return {"satellite": satellite.slug, "status": "no-images"}
 
-    state = {} if force else load_state(satellite)
-    pages = build_page_index(satellite)
+    state   = {} if force else load_state(satellite)
+    pages   = build_page_index(satellite)
+    figures = load_figures(satellite)
+    by_id   = {}
+    chunks_path = satellite.extracted_dir / "chunks.json"
+    if chunks_path.exists():
+        by_id = {c["chunk_id"]: c for c in
+                 json.loads(chunks_path.read_text(encoding="utf-8"))}
 
     todo  = [p for p in images
              if p.name not in state and p.stat().st_size >= min_bytes]
@@ -290,6 +331,18 @@ def caption(satellite, model: str = DEFAULT_MODEL, force: bool = False,
     if limit:
         todo = todo[:limit]
 
+    # The model is only needed if there is something to describe. With
+    # nothing to do, the captions file is still rewritten below, which is
+    # how a change in where figures are filed reaches captions that were
+    # written long ago.
+    if todo:
+        ok, why = llm.available()
+        if not ok:
+            print(f"    {why}")
+            if llm.BACKEND == "ollama":
+                print(f"    start it, then: ollama pull {model}")
+            return {"satellite": satellite.slug, "status": "ollama-unreachable"}
+
     # Work out each figure's context first, then describe them in windows
     # of CONCURRENCY, so state is still saved every few figures and an
     # interrupted run loses at most one window. With the default of 1 this
@@ -297,8 +350,8 @@ def caption(satellite, model: str = DEFAULT_MODEL, force: bool = False,
     jobs = []
     for path in todo:
         doc_type, page = parse_filename(path.name)
-        chunk          = nearest_chunk(pages, doc_type, page)
-        jobs.append((path, doc_type, page, chunk, page_context(chunk)))
+        chunk, near    = place(path.name, figures, by_id, pages)
+        jobs.append((path, doc_type, page, chunk, page_context(chunk, near)))
 
     width = max(1, llm.CONCURRENCY)
     replies = []
@@ -320,18 +373,8 @@ def caption(satellite, model: str = DEFAULT_MODEL, force: bool = False,
                 raise err
             if not text:
                 raise ValueError("empty response")
-            # Inherit the document's own metadata rather than guessing it
-            # from the caption wording.
-            near = chunk or {}
-            state[path.name] = {
-                "caption":         text,
-                "doc_type":        doc_type,
-                "page":            page,
-                "doc_filename":    near.get("doc_filename", ""),
-                "section_heading": near.get("section_heading", ""),
-                "fcp_number":      near.get("fcp_number", ""),
-                "subsystem":       near.get("subsystem", "UNKNOWN"),
-            }
+            state[path.name] = {"caption": text, "doc_type": doc_type,
+                                "page": page}
             done += 1
             print(f"    [{i}/{len(todo)}] {path.name}")
             print(f"        {text[:90]}")
@@ -361,13 +404,10 @@ def caption(satellite, model: str = DEFAULT_MODEL, force: bool = False,
         doc_type = entry.get("doc_type", "UNKNOWN")
         page     = entry.get("page", 0)
 
-        # State written by an older run has no inherited fields. Fall back
-        # to the nearest chunk so a re-caption is not needed just to pick
-        # the metadata up.
-        if "subsystem" not in entry:
-            near = nearest_chunk(pages, doc_type, page) or {}
-        else:
-            near = entry
+        # The heading, procedure number and subsystem are read off the
+        # section the figure sits in, every time this file is written, and
+        # not guessed from the caption's wording or frozen in the state.
+        near = place(name, figures, by_id, pages)[0] or {}
 
         captions.append({
             "chunk_id":        f"{satellite.slug}_cap_{Path(name).stem}",

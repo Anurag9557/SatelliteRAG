@@ -25,6 +25,7 @@ pinned torch.
 
 import json
 import os
+import time
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
@@ -58,6 +59,15 @@ CONCURRENCY = int(os.environ.get("SATRAG_LLM_CONCURRENCY", "1"))
 
 TIMEOUT_S = 600
 
+# A request that fails because the server is busy loading a model, or has
+# just restarted, usually works a moment later. One more try after a short
+# wait covers that. Seen on the laptop: the first question after start-up
+# came back as an error after 20 seconds and succeeded when asked again.
+# A request the server understood and refused (a missing model, a bad
+# payload) is not tried again; asking twice changes nothing.
+RETRIES      = 1
+RETRY_WAIT_S = 3
+
 # Ollama tags to the Hugging Face ids vLLM serves. Only consulted when the
 # vLLM server is serving more than one base model; normally it serves one
 # and that one is used. SATRAG_VLLM_MODEL overrides both.
@@ -74,6 +84,9 @@ HF_NAMES = {
 
 class LLMError(RuntimeError):
     """The server was not reachable, or it refused the request."""
+
+    # True when trying again may help: no answer at all, or a 5xx reply.
+    transient = False
 
 
 # ------------------------------------------------------------------ public
@@ -95,18 +108,25 @@ def chat(messages: list, *, model: str, max_tokens: int = 768,
              tag as model and leave this empty.
     num_ctx  Ollama only. vLLM fixes the context once, at server start.
     """
-    if BACKEND == "vllm":
-        return _vllm_chat(messages, model=model, max_tokens=max_tokens,
-                          temperature=temperature, schema=schema,
-                          images=images, adapter=adapter)
-    if BACKEND != "ollama":
+    if BACKEND not in ("ollama", "vllm"):
         raise LLMError(f"SATRAG_LLM={BACKEND!r}; expected ollama or vllm")
-    if adapter:
+    if adapter and BACKEND == "ollama":
         raise LLMError("Ollama cannot take an adapter per request; create a "
                        "model tag with an ADAPTER line and pass it as model")
-    return _ollama_chat(messages, model=model, max_tokens=max_tokens,
-                        temperature=temperature, num_ctx=num_ctx,
-                        schema=schema, images=images)
+
+    for attempt in range(RETRIES + 1):
+        try:
+            if BACKEND == "vllm":
+                return _vllm_chat(messages, model=model, max_tokens=max_tokens,
+                                  temperature=temperature, schema=schema,
+                                  images=images, adapter=adapter)
+            return _ollama_chat(messages, model=model, max_tokens=max_tokens,
+                                temperature=temperature, num_ctx=num_ctx,
+                                schema=schema, images=images)
+        except LLMError as exc:
+            if attempt == RETRIES or not exc.transient:
+                raise
+            time.sleep(RETRY_WAIT_S)
 
 
 def chat_many(batch: list, *, concurrency: int = None, **kwargs) -> list:
@@ -264,10 +284,16 @@ def _post(url: str, payload: dict, who: str) -> dict:
         with urllib.request.urlopen(req, timeout=TIMEOUT_S) as r:
             return json.load(r)
     except urllib.error.HTTPError as exc:
-        body = exc.read()[:300].decode("utf-8", "replace")
-        raise LLMError(f"{who} HTTP {exc.code}: {body}")
-    except (urllib.error.URLError, OSError, ValueError) as exc:
-        raise LLMError(f"cannot reach {who} at {url}: {exc}")
+        body  = exc.read()[:300].decode("utf-8", "replace")
+        error = LLMError(f"{who} HTTP {exc.code}: {body}")
+        error.transient = exc.code >= 500
+        raise error
+    except (urllib.error.URLError, OSError) as exc:
+        error = LLMError(f"cannot reach {who} at {url}: {exc}")
+        error.transient = True
+        raise error
+    except ValueError as exc:
+        raise LLMError(f"{who} at {url} did not reply with JSON: {exc}")
 
 
 def _attach_images(messages, images, style):

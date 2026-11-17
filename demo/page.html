@@ -245,7 +245,7 @@ function ask() {
     caption(d) {
       for (const side of ["ollama", "vllm"]) { $("text-" + side).className = "answer"; $("text-" + side).textContent = d.text; }
       $("verdict-one").style.display = "block";
-      $("verdict-one").innerHTML = "A figure request is answered from the figure's caption, without a model, so there is nothing for the servers to differ on.";
+      $("verdict-one").textContent = d.why || "A figure request is answered from the figure's caption, without a model, so there is nothing for the servers to differ on.";
     },
     start(d) { $("text-" + d.side).textContent = ""; $("text-" + d.side).className = "answer"; startTimer(d.side, "total-"); },
     token(d) {

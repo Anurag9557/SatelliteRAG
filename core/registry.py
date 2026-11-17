@@ -115,6 +115,13 @@ DEFAULT_RETRIEVAL = {
 
 DEFAULT_MODEL = "minilm-l6"
 
+# How documents are read. "flat" gives sections of plain text and is what
+# every figure in results/ was measured on. "structure" keeps tables,
+# heading paths and paragraph boundaries (core/layout.py) so chunks are cut
+# between them. Set per satellite with parsing.mode.
+PARSING_MODES   = ("flat", "structure")
+DEFAULT_PARSING = "flat"
+
 
 def normalise_filename(name: str) -> str:
     """Underscores and camel case become spaces so word patterns match."""
@@ -172,6 +179,12 @@ class Satellite:
     store_suffix: str = ""
     model_override: str = ""
 
+    # Set only when comparing parsers (compare_parsing.py). extract_suffix
+    # sends the extraction to its own folder so the working one is left
+    # alone; parsing_override picks the reader without editing the config.
+    extract_suffix: str = ""
+    parsing_override: str = ""
+
     # Paths
 
     @property
@@ -180,6 +193,8 @@ class Satellite:
 
     @property
     def extracted_dir(self) -> Path:
+        if self.extract_suffix:
+            return self.root / f"extracted_{self.extract_suffix}"
         return self.root / "extracted"
 
     @property
@@ -277,6 +292,16 @@ class Satellite:
         if self.model_override:
             return self.model_override
         return (self.config.get("embedding") or {}).get("model", DEFAULT_MODEL)
+
+    @property
+    def parsing_mode(self) -> str:
+        mode = (self.parsing_override
+                or (self.config.get("parsing") or {}).get("mode")
+                or DEFAULT_PARSING)
+        if mode not in PARSING_MODES:
+            raise ValueError(f"unknown parsing mode {mode!r}, "
+                             f"expected one of: {', '.join(PARSING_MODES)}")
+        return mode
 
     def chunking_for(self, doc_type: str) -> dict:
         """Chunking parameters for a document type, config over defaults."""

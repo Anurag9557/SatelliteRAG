@@ -1,0 +1,3 @@
+parsing,text_chunks,median_chars,max_chars,under_100_chars,continuations,start_mid_sentence,embedder_window,longer_than_window
+flat,1039,693,2115,57,483,221,256,340
+structure,779,894,2115,39,374,40,256,368
