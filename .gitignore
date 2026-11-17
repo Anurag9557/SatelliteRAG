@@ -12,6 +12,8 @@ satellites/*/documents/*
 
 # Extracted text, captions, command records, figures
 satellites/*/extracted/
+# A second extraction kept beside the first by compare_parsing.py
+satellites/*/extracted_*/
 
 # Vector stores, including the per-model ones from compare_models.py
 satellites/*/vectorstore/
@@ -114,5 +116,6 @@ bench/wsl/*
 # ---------------------------------------------------------------------
 
 lora/serve_results/
+lora/rag_results/
 lora/*.pair-split.json
 Satellite_RAG_demo_terminal_txt.txt
