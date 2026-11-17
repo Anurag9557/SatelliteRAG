@@ -219,8 +219,10 @@ command records are atomic by type rather than by length.
 five most semantically similar.
 
 **Captions inherit their metadata.** Section heading, procedure number
-and subsystem are copied from the nearest chunk, found by bisect so it
-works even when the figure's page has no chunk of its own.
+and subsystem are copied from the section the figure sits in, not guessed
+from the caption's wording. Until 16 November 2026 the section was found
+by page number alone and came out as the following section for most
+figures; it is now read off the figure's position in the document.
 
 **Batch size follows the card.** Chosen from VRAM and model dimension,
 with a halve-and-retry on out-of-memory, instead of a fixed 128 that

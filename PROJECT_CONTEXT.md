@@ -116,8 +116,10 @@ chunk size later does not require re-extracting.
 the description as a searchable chunk. That is what lets "show me the
 recovery diagram" reach an image: the diagram is not searchable, its
 description is. Captions inherit the section heading, procedure number
-and subsystem of the nearest chunk, located by bisect so it works when a
-figure's page has no chunk of its own. Resumes if interrupted.
+and subsystem of the section the figure sits in. Extraction reads that off
+the document: the figure's position on its PDF page, or the paragraph that
+holds it in a Word file. The model is also given the text printed beside
+the figure. Resumes if interrupted.
 
 **ingest** applies the per-document-type chunk budgets, embeds
 everything, and writes the vector store and keyword index.
@@ -217,6 +219,16 @@ different embedding models still merge correctly.
 2026 with the pipeline as it ships: soft router, the top 20 results scored
 in both stages. The August figures are kept in `results/archive-2026-08/`
 and are not comparable with these; the last part of this section says why.
+
+**Note, 16 November 2026.** The figure captions were written again that
+day with the right section as context (most had been given the following
+section's). The working store now holds the new captions and scores Hit@1
+84%, Hit@5 92%, Hit@10 97%, MRR 0.879 with the default settings, against
+the 93% and 0.883 below; the difference is inside the interval. The tables
+in this section, and the per-model stores they came from, were built with
+the earlier captions and have not been run again. The earlier captions and
+store are kept (`image_captions.before-context-fix.json`,
+`vectorstore_before-caption-fix/`).
 
 `MRR strict` in the result files is the same measure without the eleven
 questions that a large share of the store satisfies (`testset.BROAD`). It
