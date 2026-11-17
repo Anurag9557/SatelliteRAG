@@ -43,11 +43,13 @@ RESULTS = Path("results")
 RUNS    = Path("runs") / "answers"
 
 FCP_RE    = re.compile(r"\b(?:FCP[-\s]?)?([56]\d{3})\b")
-PROMPTS   = {"v9": generate.SYSTEM_PROMPT_V9, "v8": generate.SYSTEM_PROMPT_V8,
+PROMPTS   = {"v11": generate.SYSTEM_PROMPT_V11, "v10": generate.SYSTEM_PROMPT_V10, "v9": generate.SYSTEM_PROMPT_V9, "v8": generate.SYSTEM_PROMPT_V8,
              "v7": generate.SYSTEM_PROMPT_V7,
              "v6": generate.SYSTEM_PROMPT_V6, "v1": generate.SYSTEM_PROMPT_V1}
 # v8 also changed the note the code adds after the question.
-NOTE_RELATED = {"v8": "any", "v9": "named"}
+NOTE_RELATED = {"v8": "any", "v9": "named", "v10": "named", "v11": "named"}
+# From v10 the code also copies a used procedure's conditions into the answer.
+ADDS_CONDITIONS = {"v10", "v11"}
 
 
 def classify_refusal(text: str) -> tuple:
@@ -110,8 +112,28 @@ def checks(text: str, context: str, wanted: list) -> dict:
         "no_steps_and_more": (grounding.NO_STEPS_LINE.lower() in text.lower()
                               and not grounding.only_no_steps(text)),
         "uncited_note": generate.UNCITED_NOTE in text,
+        **conditions_kept(text, context),
         "chars": len(text),
     }
+
+
+def conditions_kept(text: str, context: str) -> dict:
+    """
+    Of the step tables an answer copies from (two or more of a table's
+    ids), how many it gives with their caution, and with every labelled
+    part (applicability, pre-requisites, caution, notes).
+    """
+    plain = grounding._plain(text)
+    used = with_caution = complete = 0
+    for proc in grounding.procedure_conditions(context):
+        if len([i for i in proc["ids"] if i in text]) < 2:
+            continue
+        used += 1
+        have = {n: grounding._plain(t)[:60] in plain for n, t in proc["parts"].items()}
+        with_caution += have.get("Caution", True)
+        complete += all(have.values())
+    return {"tables_used": used, "tables_with_caution": with_caution,
+            "tables_with_all_parts": complete}
 
 
 def run_one(sat, case: dict, negative: bool, model: str) -> dict:
@@ -151,7 +173,7 @@ def rescore(rows: list, repair: bool) -> list:
 
     With repair, the answer is first passed through the code steps that run
     after the model today (grounding.drop_false_no_steps,
-    generate.drop_trailing_not_found), so a change to
+    generate.drop_trailing_not_found, grounding.add_conditions), so a change to
     those can be measured on answers already written, without asking the
     model again.
     """
@@ -161,6 +183,9 @@ def rescore(rows: list, repair: bool) -> list:
         if repair and row["path"] == "model":
             text, _ = grounding.drop_false_no_steps(text, row["context"])
             text, _ = generate.drop_trailing_not_found(text)
+            if generate.ADD_CONDITIONS:
+                text, _ = grounding.add_conditions(text, row["context"])
+                text, _ = grounding.name_the_procedure(text, row["context"])
         out.append({**row, "answer": text,
                     **checks(text, row["context"], row["wanted_fcp"])})
     return out
@@ -194,6 +219,9 @@ def summarise(rows: list, tag: str, prompt: str) -> dict:
         "no_steps_and_more": sum(r.get("no_steps_and_more", False) for r in model),
         "cited": sum(1 for r in model if r["cited"]),
         "uncited_note": sum(r["uncited_note"] for r in model),
+        "tables_used": sum(r.get("tables_used", 0) for r in model),
+        "tables_with_caution": sum(r.get("tables_with_caution", 0) for r in model),
+        "tables_with_all_parts": sum(r.get("tables_with_all_parts", 0) for r in model),
         "answers_with_ids_removed": sum(1 for r in model if r["ids_removed"]),
         "out_of_scope_refused": f"{sum(r['refused'] for r in neg)}/{len(neg)}",
         "median_chars": int(statistics.median(r["chars"] for r in model)) if model else 0,
@@ -207,7 +235,7 @@ def main():
     ap.add_argument("--satellite", default="aditya-l1")
     ap.add_argument("--tag", default=None,
                     help="name for this run (default: the prompt version)")
-    ap.add_argument("--prompt", choices=sorted(PROMPTS), default="v9",
+    ap.add_argument("--prompt", choices=sorted(PROMPTS), default="v11",
                     help="system prompt to answer with (default: the app's)")
     ap.add_argument("--model", default=generate.DEFAULT_MODEL)
     ap.add_argument("--limit", type=int, default=0)
@@ -238,6 +266,7 @@ def main():
 
     generate.SYSTEM_PROMPT = PROMPTS[args.prompt]
     generate.NOTE_RELATED  = NOTE_RELATED.get(args.prompt, "")
+    generate.ADD_CONDITIONS = args.prompt in ADDS_CONDITIONS
     tag   = args.tag or args.prompt
     cases = [(c, False) for c in TEST_SET] + [(c, True) for c in NEGATIVE_CASES]
     if args.limit:

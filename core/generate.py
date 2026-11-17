@@ -44,6 +44,27 @@ MAX_TOKENS    = 768
 # printing a "Sources:" list under an answer that cites none of them.
 NOT_FOUND_MESSAGE = "Not found in available documents."
 
+# Version 11, 18 November. v10 run on 102 questions: the code step did
+# its job (every answer that copied a table carries its caution and
+# notes; the demo answer is right), but the two new rules hurt more than
+# they helped. "Name another procedure by its FCP number and title only"
+# made four index-only replies drop the procedure's own index line, and
+# one step table (5204) was described instead of copied; the rule about
+# naming changed nothing for pcs. v11 is v9 plus one plain rule about
+# mixing tables, with the conditions still added in code.
+#
+# Version 10, 18 November (tried, not kept). Reading v9's 30 answers (17 November) left two
+# faults that a prompt has to handle and one it should not:
+#   - obc_on gave FCP 5203's system-reset steps under "For OBC-2" in a
+#     switch-on answer. v10: steps from one procedure table only, the one
+#     asked about; any other is named by number and title only.
+#   - pcs said the command sequencer handles battery thresholds, citing a
+#     passage that never names it. v10: say a passage describes something
+#     only if it names it.
+#   - every step-table answer left out the procedure's caution and most of
+#     its conditions, though v8 and v9 asked for them. That is now done in
+#     code (grounding.add_conditions, ADD_CONDITIONS below), not asked for.
+#
 # Version 9, 17 November. v8 tightened, after its run (102 questions):
 #   - with "also give the conditions", the model rewrote the demo
 #     procedure's steps in its own words and copied none of its 15 command
@@ -85,13 +106,18 @@ NOT_FOUND_MESSAGE = "Not found in available documents."
 # core/grounding.context_note() reads which FCPs have step tables in the
 # passages and says so after the question, and the prompt is v1 plus one
 # rule. Results: bench/results-prompt-gpu/ (7B fp16, lab GPU).
-PROMPT_VERSION = "v9-steps-first"
+PROMPT_VERSION = "v11-one-table"
 
 # What the note after the question asks for about an index-only procedure
 # (grounding.context_note): "" for v7 and before, "any" for v8, "named"
-# for v9. To go back to v7, set this to "" and SYSTEM_PROMPT below to
-# SYSTEM_PROMPT_V7.
+# for v9 to v11. To go back to v7, set this to "" and SYSTEM_PROMPT below
+# to SYSTEM_PROMPT_V7.
 NOTE_RELATED = "named"
+
+# Copy a used procedure's applicability, pre-requisites, caution and notes
+# into the answer in code (grounding.add_conditions). On from v10; off
+# reproduces v9 and earlier exactly.
+ADD_CONDITIONS = True
 
 _HEAD = """You are a spacecraft operations assistant for mission control.
 Answer using ONLY the provided context from official mission documents.
@@ -135,10 +161,25 @@ _TAIL = f"""
 _END = f"""
 - Do not end an answer with "{NOT_FOUND_MESSAGE}" when you have answered."""
 
+_ONE_PROCEDURE = """
+- Give steps from one procedure table only: the one the question asks
+  about. Never put another procedure's steps under it. If another
+  procedure is relevant, name it by its FCP number and title only."""
+
+_NAMED = """
+- Say that a passage describes something only if that passage names it."""
+
+_ONE_TABLE = """
+- If the context holds step tables for more than one procedure, give the
+  steps of the procedure the question asks about, not another's."""
+
+SYSTEM_PROMPT_V11 = _HEAD + _COPY + _STEPS_FIRST + _ONE_TABLE + _CITE + _TAIL + _END
+SYSTEM_PROMPT_V10 = (_HEAD + _COPY + _ONE_PROCEDURE + _STEPS_FIRST + _CITE
+                     + _NAMED + _TAIL + _END)
 SYSTEM_PROMPT_V9 = _HEAD + _COPY + _STEPS_FIRST + _CITE + _TAIL + _END
 SYSTEM_PROMPT_V8 = _HEAD + _COPY + _WHOLE + _CITE + _TAIL
 SYSTEM_PROMPT_V7 = _HEAD + _COPY + _CITE + _TAIL
-SYSTEM_PROMPT    = SYSTEM_PROMPT_V9
+SYSTEM_PROMPT    = SYSTEM_PROMPT_V11
 SYSTEM_PROMPT_V6 = _HEAD + _COPY + _TAIL
 SYSTEM_PROMPT_V1 = _HEAD + _TAIL
 
@@ -433,6 +474,9 @@ def answer(query: str, hits: list, model: str = DEFAULT_MODEL,
     reply, removed = grounding.guard(reply, context)
     reply, _       = grounding.drop_false_no_steps(reply, context)
     reply, _       = drop_trailing_not_found(reply)
+    if ADD_CONDITIONS:
+        reply, _   = grounding.add_conditions(reply, context)
+        reply, _   = grounding.name_the_procedure(reply, context)
     reply, cited   = check_citations(reply, len(hits))
     return Answer(reply, removed_ids=removed, cited=cited, context=context)
 

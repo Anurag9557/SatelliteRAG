@@ -179,6 +179,91 @@ def test_the_fixed_no_steps_reply_is_not_flagged():
     assert generate.UNCITED_NOTE not in text
 
 
+# A procedure's conditions, copied in code (prompt v10)
+
+TABLE = """[Source 1 | FCP | FCP-7009 | p.3 | "XYZ- 7009: PUMP RESET"]
+XYZ- 7009: PUMP RESET
+
+APPLICABILITY:
+When the pump stops responding.
+
+ PRE-REQUISITES:
+-
+
+ CAUTION:
+Pump reset is NOT a nominal operation.
+
+ PROCEDURE:
+Evt
+Stp
+001
+PUMP-1_RESET
+PMPS1001
+PMP_STS                :
+PMP00101:RST
+ NOTES:
+At reset the pump restarts from its stored table.
+Evt
+Stp
+002
+PUMP-2_RESET
+PMPS1002
+END OF PROCEDURE
+
+[Source 2 | FCP | FCP-7010 | p.1 | "FCP Index"]
+FCP 7010 - XYZ - PUMP OFF"""
+
+
+def test_conditions_are_read_from_the_table():
+    [proc] = grounding.procedure_conditions(TABLE)
+    assert proc["fcp"] == "7009" and proc["source"] == 1
+    assert proc["parts"] == {
+        "Applicability": "When the pump stops responding.",
+        "Caution": "Pump reset is NOT a nominal operation.",
+        "Notes": "At reset the pump restarts from its stored table."}   # "-" left out
+
+
+def test_an_answer_that_copies_the_steps_gets_the_caution():
+    answer = "1. PUMP-1_RESET (PMPS1001), check PMP00101.\n2. PUMP-2_RESET (PMPS1002). [Source 1]"
+    out, given = grounding.add_conditions(answer, TABLE)
+    assert given == ["7009"]
+    assert out.startswith("FCP 7009 [Source 1]\nApplicability: When the pump")
+    assert "Caution: Pump reset is NOT a nominal operation." in out
+    assert out.endswith("Notes, FCP 7009: At reset the pump restarts from its stored table. [Source 1]")
+    assert answer in out
+
+
+def test_conditions_already_given_are_not_repeated():
+    answer = ("Pump reset is NOT a nominal operation. When the pump stops responding. "
+              "At reset the pump restarts from its stored table. PMPS1001, PMPS1002.")
+    out, given = grounding.add_conditions(answer, TABLE)
+    assert out == answer and given == []
+
+
+def test_an_answer_that_does_not_use_the_table_is_left_alone():
+    answer = "FCP 7010 - XYZ - PUMP OFF\n" + grounding.NO_STEPS_LINE
+    assert grounding.add_conditions(answer, TABLE) == (answer, [])
+
+
+def test_a_nameless_no_steps_reply_gets_the_cited_index_line():
+    answer = grounding.NO_STEPS_LINE + " [Source 2]"
+    out, line = grounding.name_the_procedure(answer, TABLE)
+    assert line == "FCP 7010 - XYZ - PUMP OFF"
+    assert out == "FCP 7010 - XYZ - PUMP OFF [Source 2]\n\n" + answer
+
+
+def test_a_no_steps_reply_that_names_its_procedure_is_left_alone():
+    answer = "FCP 7010 - XYZ - PUMP OFF\n" + grounding.NO_STEPS_LINE
+    assert grounding.name_the_procedure(answer, TABLE) == (answer, "")
+
+
+def test_the_app_prompt_is_v11_and_keeps_the_older_ones():
+    assert generate.SYSTEM_PROMPT == generate.SYSTEM_PROMPT_V11
+    assert "step tables for more than one procedure" in generate.SYSTEM_PROMPT_V11
+    assert "one procedure table only" in generate.SYSTEM_PROMPT_V10
+    assert "step tables for more than one" not in generate.SYSTEM_PROMPT_V9
+
+
 # The command log
 
 def record(n, mnemonic, cid, subsystem, time):

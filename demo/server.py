@@ -178,6 +178,9 @@ def answer(side: str, job: dict, on_text=None) -> dict:
     text, removed = grounding.guard(text, job["context"])
     text, _       = grounding.drop_false_no_steps(text, job["context"])
     text, _       = generate.drop_trailing_not_found(text)
+    if generate.ADD_CONDITIONS:
+        text, _   = grounding.add_conditions(text, job["context"])
+        text, _   = grounding.name_the_procedure(text, job["context"])
     text, _       = generate.check_citations(text, job.get("n_sources", 5))
     tokens  = tokens or len(parts)
     writing = total - (first or 0)

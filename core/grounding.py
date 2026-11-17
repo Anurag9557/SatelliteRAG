@@ -47,6 +47,119 @@ def procedure_tables(context: str) -> list:
     return sorted(set(BODY_HEAD_RE.findall(context)))
 
 
+# The labelled parts of a procedure table besides its steps, in the order
+# the document prints them. NOTES comes after the steps, often before a
+# page break that repeats the table header, so it runs only to the next
+# header, page footer or end of the procedure.
+SOURCE_RE  = re.compile(r"^\[Source (\d+) \|[^\n]*\]\n", re.M)
+SECTIONS   = (("APPLICABILITY", "Applicability"), ("PRE-REQUISITES", "Pre-requisites"),
+              ("CAUTION", "Caution"), ("NOTES", "Notes"))
+SECTION_END_RE = re.compile(
+    r"\n\s*(?:APPLICABILITY:|PRE-REQUISITES:|CAUTION:|PROCEDURE:|NOTES:|END OF PROCEDURE"
+    r"|Evt\s*\n\s*Stp|ADITYA-L1 Flight Control Procedures)")
+
+
+def procedure_conditions(context: str) -> list:
+    """
+    For each procedure table in the context: its source number, FCP, the
+    identifiers in it, and its applicability, pre-requisites, caution and
+    notes, as written. Empty parts ("-") are left out.
+    """
+    out = []
+    starts = list(SOURCE_RE.finditer(context))
+    for k, m in enumerate(starts):
+        block = context[m.end(): starts[k + 1].start() if k + 1 < len(starts) else len(context)]
+        head = BODY_HEAD_RE.search(block)
+        if not head or "PROCEDURE:" not in block:
+            continue
+        parts = {}
+        for label, name in SECTIONS:
+            at = block.find(label + ":")
+            if at < 0:
+                continue
+            body = block[at + len(label) + 1:]
+            end = SECTION_END_RE.search(body)
+            text = " ".join((body[:end.start()] if end else body).split())
+            if text.strip("- "):
+                parts[name] = text
+        out.append({"source": int(m.group(1)), "fcp": head.group(1),
+                    "ids": set(ID_RE.findall(block)), "parts": parts})
+    return out
+
+
+INDEX_LINE_RE = re.compile(r"^FCP \d{4} - .+$", re.M)
+
+
+def name_the_procedure(answer: str, context: str) -> tuple:
+    """
+    (answer, index line added or ""). A no-steps reply that does not say
+    which procedure it is about gets that procedure's index line in front.
+
+    The note asks for "its index line followed by" the no-steps sentence.
+    With v9 every such reply had it; with v10 and v11, 3 to 4 of 43 gave the
+    sentence alone, citing the index line without quoting it. The line to
+    use is the one in the source the reply cites; failing that, the first
+    index line in the context, which retrieval ranked highest.
+    """
+    at = answer.find(NO_STEPS_LINE)
+    if at < 0 or fcp_numbers_named(answer[:at], context):
+        return answer, ""
+    starts = list(SOURCE_RE.finditer(context))
+    blocks = {int(m.group(1)): context[m.end(): starts[k + 1].start() if k + 1 < len(starts) else len(context)]
+              for k, m in enumerate(starts)}
+    cited = [int(n) for n in re.findall(r"\[Source (\d+)\]", answer[at:])]
+    for n in cited + sorted(blocks):
+        line = INDEX_LINE_RE.search(blocks.get(n, ""))
+        if line:
+            return f"{line.group(0).strip()} [Source {n}]\n\n{answer}", line.group(0).strip()
+    return answer, ""
+
+
+def _plain(text: str) -> str:
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", text.lower()).split())
+
+
+def add_conditions(answer: str, context: str) -> tuple:
+    """
+    (answer, FCP numbers given conditions). When an answer copies the steps
+    of a procedure table in the context, add that procedure's
+    applicability, pre-requisites and caution before it and its notes
+    after it, copied as written and cited, unless the answer already has
+    them.
+
+    Prompts v8 and v9 asked the model for these with the steps. Read on 17
+    November, 5 answers copied a step table with every command right, and
+    one added the applicability and none the caution: the demo procedure
+    lost "NOT a nominal operation". The parts are labelled in the table,
+    so the code can copy them, and a caution is not something to leave to
+    a model's judgement.
+
+    An answer counts as using a table when it carries two of its
+    identifiers (a command id and its telemetry, or two commands).
+    """
+    plain = _plain(answer)
+    before, after, given = [], [], []
+    for proc in procedure_conditions(context):
+        if len([i for i in proc["ids"] if i in answer]) < 2:
+            continue
+        missing = {name: text for name, text in proc["parts"].items()
+                   if _plain(text)[:60] not in plain}
+        if not missing:
+            continue
+        cite = f"[Source {proc['source']}]"
+        lead = [f"{name}: {missing[name]}" for name in ("Applicability", "Pre-requisites", "Caution")
+                if name in missing]
+        if lead:
+            before.append(f"FCP {proc['fcp']} {cite}\n" + "\n".join(lead))
+        if "Notes" in missing:
+            after.append(f"Notes, FCP {proc['fcp']}: {missing['Notes']} {cite}")
+        given.append(proc["fcp"])
+    if not given:
+        return answer, []
+    text = "\n\n".join(before + [answer.strip()] + after)
+    return text, given
+
+
 def context_note(context: str, related: str = "") -> str:
     """
     One line, added after the question, saying which procedures the
