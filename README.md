@@ -88,7 +88,7 @@ Measured on a labelled set of 100 questions written against the documents, and o
 ### System map
 
 ```mermaid
-flowchart LR
+flowchart TB
     subgraph BUILD["Build: once per satellite"]
         direction LR
         D["5 documents<br/>procedures · report<br/>2 manuals · command log"] --> X["Extract<br/>one parser per type<br/>figures placed in sections"]
@@ -98,6 +98,7 @@ flowchart LR
     end
 
     subgraph STORES["Stores: on the machine"]
+        direction LR
         K[("knowledge<br/>ChromaDB<br/>1,474 chunks")]
         B[("BM25 index<br/>same chunks")]
         M[("commands<br/>ChromaDB<br/>203 records")]
@@ -108,6 +109,7 @@ flowchart LR
     I --> M
 
     subgraph ASK["Question time"]
+        direction LR
         Q["Question"] --> R["Soft router"]
         R --> S["Search + fuse + rerank"]
         S --> T["Top 5 passages"]
@@ -191,7 +193,7 @@ The third list exists because most procedures appear only as a one-line index en
 ### Checks after the model
 
 ```mermaid
-flowchart LR
+flowchart TB
     A["Model's<br/>answer"] --> G["Grounding guard<br/>a command id not in<br/>the passages is removed"]
     G --> N["A false 'steps are not<br/>in the documents'<br/>is removed"]
     N --> T["A trailing 'not found'<br/>after a real answer<br/>is removed"]

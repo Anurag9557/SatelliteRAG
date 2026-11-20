@@ -104,27 +104,24 @@ Before each commit, the same one-line check:
 ## What ends up in the repository
 
     cli.py                    one entry point for everything
-    core/                     nine modules, the pipeline
-    evaluate.py               100-question retrieval evaluation
-    testset.py                the labelled questions (see the decision above)
-    compare_models.py         embedder comparison
-    compare_rerankers.py      embedder x reranker comparison
-    collect_results.py        merge every result file into one table
-    results/                  all measurements, metrics only
-    README.md                 usage
+    core/                     13 modules, the pipeline
+    demo/                     browser demo, Ollama and vLLM side by side
+    lora/                     fine-tuning: closed-book and RAFT-style adapters
+    bench/                    the Ollama-vs-vLLM benchmark
+    tests/                    checks on the code-decided parts of answering
+    docs/                     walkthrough, before/after record, context, this file
+    evaluate*.py, testset*.py retrieval, answer and router evaluation
+    compare_*.py              embedder, reranker and parser comparisons
+    review_*.py               pages for reading answers and captions by eye
+    collect_results.py        merge result files into one table
+    results/                  summary tables of the measurements
+    README.md                 usage, flow diagrams, results
     SETUP.txt                 installation
-    PROJECT_CONTEXT.md        architecture, decisions, measured numbers
-    COMPARISON.md             this system versus the previous pipeline
     requirements.txt
     .gitignore
 
-Roughly 200 KB. The documents, the models and the vector stores stay on
-the machine.
-
-`CHANGES.md` is superseded by `COMPARISON.md` — delete it before the
-first commit:
-
-    del CHANGES.md
+The documents, the models, the vector stores, extracted text, run answers,
+LoRA data and adapters stay on the machine; `.gitignore` covers them.
 
 
 ## For your guide: running it after cloning
