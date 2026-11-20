@@ -10,8 +10,8 @@ answer generation all run locally.
 Retrieval is hybrid — a dense semantic pass and a BM25 keyword pass,
 fused by Reciprocal Rank Fusion, with an optional cross-encoder reranker.
 Every component was chosen by measurement on a 100-question labelled set;
-see `PROJECT_CONTEXT.md` for the numbers and `COMPARISON.md` for what
-changed against the earlier pipeline.
+see `docs/PROJECT_CONTEXT.md` for the numbers and `docs/COMPARISON.md`
+for what changed against the earlier pipeline.
 
     Hit@1  0.84     Hit@5  0.93     Hit@10  0.97     MRR  0.883
 
@@ -20,10 +20,12 @@ changed against the earlier pipeline.
 | File | Contents |
 |---|---|
 | `SETUP.txt` | installation, step by step |
-| `GIT_SETUP.md` | pushing to GitHub, and how to run it after cloning |
-| `PROJECT_CONTEXT.md` | architecture, design decisions, every measured number |
-| `COMPARISON.md` | this system versus the previous pipeline |
-| `results/` | raw measurements |
+| `docs/PROJECT_WALKTHROUGH.md` | the whole project explained in build order, chapter by chapter |
+| `docs/CHANGES_BEFORE_AFTER.md` | each change made, with what it looked like before and after |
+| `docs/PROJECT_CONTEXT.md` | architecture, design decisions, every measured number |
+| `docs/COMPARISON.md` | this system versus the previous pipeline |
+| `docs/GIT_SETUP.md` | pushing to GitHub, and how to run it after cloning |
+| `results/` | summary tables of the measurements (per-run files are kept locally, not in git) |
 | `testset_public_demo.py` / `evaluate_public_demo.py` | retrieval benchmark for the public demo dataset below (`testset.py` / `evaluate.py` are written for the confidential real corpus and score zero against it) |
 
 

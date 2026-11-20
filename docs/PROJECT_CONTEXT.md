@@ -217,8 +217,8 @@ different embedding models still merge correctly.
 
 100 labelled questions, `results/all_results.csv`, measured on 12 November
 2026 with the pipeline as it ships: soft router, the top 20 results scored
-in both stages. The August figures are kept in `results/archive-2026-08/`
-and are not comparable with these; the last part of this section says why.
+in both stages. The August figures are kept locally in
+`results/archive-2026-08/` (not in git) and are not comparable with these; the last part of this section says why.
 
 **Note, 16 November 2026.** The figure captions were written again that
 day with the right section as context (most had been given the following

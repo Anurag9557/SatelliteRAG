@@ -1,7 +1,0 @@
-
-# Benchmark: the context cache holds retrieved passages and the scenario
-# JSONs hold generated answers. Both carry document text, the same as
-# satellites/*/extracted/ above. comparison.csv and comparison.md are
-# aggregate numbers only and are meant to be committed.
-bench/cache/
-bench/results/*.json

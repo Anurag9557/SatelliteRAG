@@ -119,3 +119,10 @@ lora/serve_results/
 lora/rag_results/
 lora/*.pair-split.json
 Satellite_RAG_demo_terminal_txt.txt
+
+# Kept on disk, not in git: superseded August results, the per-run JSON
+# files that results/*.csv are built from, and scratch notes. The summary
+# tables in results/ are what the docs quote.
+results/archive-*/
+results/*.json
+bench/gitignore-additions.txt

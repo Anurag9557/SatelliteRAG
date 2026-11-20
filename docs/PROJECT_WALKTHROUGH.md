@@ -2370,8 +2370,8 @@ The smaller errors:
 | Captioning speed-up | Described as against "Ollama, 4 in parallel" | It was 2 slots and 4 clients; wording corrected, not re-tested |
 | LoRA split | Train and evaluation pairs could share a source passage | Split by passage (595 train, 101 eval, 0 shared), retrained (chapter 10) |
 
-The August files were moved to `results/archive-2026-08/` (45 files),
-and the full sweep was run again: 40 result files and the comparison
+The August files were moved to `results/archive-2026-08/` (45 files,
+kept locally, not in git), and the full sweep was run again: 40 result files and the comparison
 tables.
 
 **What came out.**
