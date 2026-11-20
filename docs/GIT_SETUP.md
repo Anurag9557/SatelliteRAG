@@ -68,7 +68,7 @@ Look again — this is the last point at which a mistake is cheap. Then:
 Create the repository on GitHub as **private**, without a README (you
 have one), then:
 
-    git remote add origin https://github.com/<your-user>/SatelliteRAG.git
+    git remote add origin https://github.com/Anurag9557/SatelliteRAG.git
     git push -u origin main
 
 **Confirm it is private.** GitHub → the repository → Settings →
@@ -130,7 +130,7 @@ Send this section on its own.
 
 **1. Clone**
 
-    git clone https://github.com/<your-user>/SatelliteRAG.git
+    git clone https://github.com/Anurag9557/SatelliteRAG.git
     cd SatelliteRAG
 
 **2. Python 3.11 or 3.12.** Newer versions often have no matching CUDA
